@@ -1,7 +1,12 @@
 # Architecture
 
-Status: Phase 1 design. No application or telemetry services are running yet.
+Status: Phase 2 implements the order API and mock payment service with JSON logs.
+The order store is in memory. The rest of the architecture remains planned.
 The [main README](../README.md#3-architecture-diagram) contains the target diagram.
+
+Current path: client → FastAPI → in-memory order store. A separate `GET /payment`
+path calls the mock payment service over HTTP. NGINX and PostgreSQL are not yet
+in this path. Order creation does not trigger payment in Phase 2.
 
 ## System boundaries
 
@@ -60,6 +65,9 @@ FastAPI and payment services will propagate trace context over HTTP, while
 SQLAlchemy instrumentation will create database client spans in the API process.
 Those spans do not require installing an application SDK inside PostgreSQL.
 
+Phase 2 propagates `X-Request-ID` for log correlation only. No tracing SDK or
+export pipeline has been configured, and application logs report `trace_id: null`.
+
 NGINX is part of the request path. Forwarding trace context and producing a
 proxy span are separate behaviors. Native NGINX spans require explicit proxy
 instrumentation; module and image support will be checked in Phase 8 before
@@ -79,7 +87,8 @@ work therefore imply approximately 5.5 seconds overall in that scenario.
 
 ## Decisions deferred to their implementation phases
 
-Versions, ports, dependency pins, network names, storage paths, retention, and
-resource requirements will be chosen and verified as the relevant services are
-added. Phase 1 defines responsibilities without presenting untested settings as
-a working deployment.
+Phase 2 pins the Python dependencies and documents local ports 8000 for the API
+and 8001 for payment. The API's payment connection is configurable through
+environment variables. Infrastructure versions, network names, storage paths,
+retention, and resource requirements will be chosen and verified as those
+services are added.

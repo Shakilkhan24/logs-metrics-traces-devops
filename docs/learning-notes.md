@@ -66,7 +66,7 @@ and database files should not be part of the source history.
 `.gitignore` helps Git avoid adding matching untracked files. It does not remove
 an already tracked file from history. This repository ignores `.env` files and
 allows names such as `.env.example` for future templates with placeholder values.
-There is no environment template yet because there are no application settings.
+Phase 2 adds `.env.example` to document the payment connection settings.
 
 Production systems also distinguish deployable configuration from runtime data:
 changing a service configuration is a versioned change, while storing a new
@@ -108,8 +108,11 @@ have not been implemented yet.
 Completing these exercises is a learner checkpoint; creating the scaffold alone
 does not establish that the concepts have been mastered.
 
-## Next: Phase 2
+## Phase 2: FastAPI and structured logging
 
-We will introduce FastAPI routes, request and response models, and structured
-application logging. PostgreSQL persistence is introduced in Phase 3 so the
-application and database concepts can be explained and verified separately.
+The [Phase 2 lesson](phase-02-fastapi.md) covers routes, schemas, status codes,
+process memory, JSON logs, concurrent request context, and HTTP dependency errors.
+It includes commands and expected results for running the two services locally.
+
+PostgreSQL persistence is introduced in Phase 3 so the application and database
+concepts can be explained and verified separately.

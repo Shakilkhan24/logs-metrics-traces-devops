@@ -68,3 +68,70 @@ The scaffold is implemented; the learner's understanding has not been assessed.
 Phase 2 will implement the FastAPI application and structured application logging.
 No application, container, database, or telemetry runtime was implemented in
 Phase 1.
+
+## 2026-10-05 — Phase 2: FastAPI and structured logging
+
+Commit subject: `feat: create FastAPI ecommerce service`.
+
+### What changed
+
+- Implemented the order API with product listing, order creation and retrieval,
+  an intentional error endpoint, and an outbound payment demonstration.
+- Added a separate mock payment service that returns simulated approvals.
+- Added strict order input validation, catalogue-based prices in integer cents,
+  and a temporary in-memory order store.
+- Added JSON request, business, error, and lifecycle logs to stdout.
+- Added validated request IDs, response headers, cross-service ID propagation,
+  and context isolation for concurrent requests.
+- Added a reusable HTTP client with validated environment settings and explicit
+  502/504 dependency failure responses.
+- Pinned runtime and test dependencies, added tests and lint configuration, and
+  documented setup, request examples, debugging exercises, and limitations.
+
+### Why it changed
+
+A working application is needed before telemetry collection can be meaningful.
+This phase exposes normal operations, invalid inputs, application exceptions,
+and HTTP dependency failures while keeping database concepts separate.
+
+### DevOps concepts introduced
+
+REST routes and HTTP status codes, input validation, application lifecycle,
+environment configuration, in-memory process state, structured JSON events,
+request correlation, concurrent execution contexts, and dependency timeouts.
+
+### Production equivalent
+
+Services validate inputs at their boundaries, calculate authoritative values on
+the server, reuse connection pools, and provide searchable operational events.
+Correlation IDs let an operator connect events from multiple processes.
+Production order storage requires durability and shared state; this lab introduces
+that with PostgreSQL in Phase 3. The mock payment route does not charge money.
+
+### Verification
+
+- Python 3.12.3; all 27 pytest cases passed.
+- Ruff lint and formatting checks passed; installed dependency compatibility
+  checks passed.
+- Live smoke check started separate Uvicorn processes on temporary local ports
+  and verified catalogue access, order creation and lookup, API documentation,
+  OpenAPI, the payment call, and an intentional 500 response.
+- Stopping the payment process produced 502 from the API; the API remained
+  responsive afterward. Both temporary servers were stopped after the check.
+- Parsed all 21 application events from the live check as JSON and verified
+  matching request IDs across payment logs and error events.
+- Checked documentation links, the 14 README sections, formatting, and the
+  preserved original specification's unchanged SHA-256.
+
+### Learner checkpoint
+
+Follow [Phase 2](phase-02-fastapi.md), create an order, find its log events, and
+explain why a restart loses that order. Then follow one payment request through
+both service logs. Passing tests verifies the implementation; these exercises
+verify your understanding.
+
+### Next phase
+
+Phase 3 will add PostgreSQL persistence, SQLAlchemy, SQL logging, and controlled
+slow database queries. `/slow-query` and `/metrics` are not implemented yet;
+logs have request IDs but no OpenTelemetry trace IDs.

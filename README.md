@@ -3,9 +3,10 @@
 A hands-on learning project for understanding how logs, metrics, and distributed
 traces help explain the behavior of an e-commerce application.
 
-**Current milestone: Phase 1 — repository structure and learning documentation.**
-Application code, container configuration, and running telemetry arrive in later
-phases. There is no runnable service or Docker Compose file yet.
+**Current milestone: Phase 2 — FastAPI services and structured application logs.**
+The order API and mock payment service run locally with Python. Orders are stored
+in process memory and reset on restart. PostgreSQL, containers, centralized logs,
+metrics, and distributed tracing arrive in later phases.
 
 The original project brief is preserved in
 [docs/implementation-spec.md](docs/implementation-spec.md).
@@ -23,7 +24,7 @@ make a focused Git commit.
 | Phase | Deliverable | Status |
 | --- | --- | --- |
 | 1 | Repository structure and learning documentation | Complete |
-| 2 | FastAPI e-commerce service and application logging | Planned |
+| 2 | FastAPI e-commerce service and application logging | Complete |
 | 3 | PostgreSQL persistence and slow-query exercises | Planned |
 | 4 | NGINX reverse proxy and request logging | Planned |
 | 5 | Docker images and a runnable Docker Compose application | Planned |
@@ -44,14 +45,14 @@ These signals complement each other. A latency metric can reveal a trend; a
 trace can locate a slow database call; a log can explain an error from that call.
 Later phases will attach trace IDs to application logs to connect the evidence.
 
-For Phase 1, focus on the foundation: a repository is the shared record of source
-code, service configuration, and operating knowledge. Read the
-[Phase 1 learning notes](docs/learning-notes.md#phase-1-repository-foundations)
-before moving on.
+Start with the [repository foundations](docs/learning-notes.md#phase-1-repository-foundations),
+then follow the [Phase 2 lesson](docs/phase-02-fastapi.md) to learn HTTP routes,
+request validation, process memory, and structured logging.
 
 ## 3. Architecture Diagram
 
-The diagram describes the **target system**, not services that currently run.
+The diagram describes the **target system**. Phase 2 implements FastAPI and the
+mock payment service; clients currently connect directly to FastAPI.
 
 ```mermaid
 flowchart LR
@@ -90,6 +91,13 @@ METRICLOGTRACES/
 ├── .gitattributes
 ├── .gitignore
 ├── README.md
+├── requirements.in          # Direct runtime dependencies
+├── requirements.txt         # Pinned runtime dependency set
+├── requirements-dev.in      # Direct development dependencies
+├── requirements-dev.txt     # Pinned test and lint environment
+├── pyproject.toml           # Test and lint settings
+├── .python-version          # Python 3.12
+├── .env.example             # Documented payment connection settings
 ├── app/                     # FastAPI application
 ├── payment/                 # Separate mock service for distributed calls
 ├── nginx/                   # Reverse proxy configuration
@@ -103,20 +111,23 @@ METRICLOGTRACES/
 │   └── dashboards/          # Versioned dashboard definitions
 ├── otel/                    # OpenTelemetry Collector configuration
 ├── jaeger/                  # Trace storage and exploration configuration
+├── tests/                   # API behavior and logging tests
 └── docs/
     ├── architecture.md
     ├── implementation-spec.md
     ├── learning-journal.md
     ├── learning-notes.md
+    ├── phase-02-fastapi.md
     └── troubleshooting.md
 ```
 
-Files such as `app/main.py`, `app/Dockerfile`, and `docker-compose.yml` will be
-introduced in the phases that implement them.
+The application now has routes, request/response schemas, an in-memory store,
+configuration, and JSON logging. `app/Dockerfile` and `docker-compose.yml` arrive
+in Phase 5.
 
 ## 4. Request Lifecycle
 
-The planned checkout path is:
+The target checkout path is:
 
 1. A client sends a request to NGINX.
 2. NGINX forwards it to FastAPI.
@@ -124,16 +135,22 @@ The planned checkout path is:
 4. When payment is needed, FastAPI calls the mock payment service over HTTP.
 5. The response returns through NGINX to the client.
 
-Later instrumentation will record timings, outcomes, and related events along
-this path. A payment service in its own process lets us practice passing trace
-context across a real service boundary.
+In Phase 2, `POST /orders` validates and stores an order in memory; it does not
+charge or call payment. `GET /payment` separately demonstrates the HTTP call to
+the mock service. Both services log their requests, and the API forwards
+`X-Request-ID` to the payment service. This is log correlation, not tracing yet.
 
 ## 5. Logging Pipeline
 
 **Planned in Phase 6:** application, NGINX, and PostgreSQL logs → Elastic Agent →
 Elasticsearch → Kibana.
 
-Applications will emit structured JSON logs. Elastic Agent will collect and
+The two applications now emit structured JSON logs to stdout. Request events
+include a UTC timestamp, service, request ID, route template, status, and duration.
+Business events describe order creation and simulated payment approval. Error
+events record failures. `trace_id` is currently null.
+
+Elastic Agent will collect and
 prepare log events; Elasticsearch will index them for search; Kibana will provide
 the interface for investigating them. NGINX and database log formats will be
 configured and parsed explicitly during implementation.
@@ -169,16 +186,24 @@ will be interpreted this way when implementing the slow-query exercise.
 
 ## 8. Installation
 
-For Phase 1, only Git and a text editor are required. From this repository root:
+Use Python 3.12 and Git. These commands are for Bash on Linux or WSL, run from the
+repository root:
 
 ```bash
-git status
-git log --oneline
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
 ```
 
-The first command shows changes relative to Git's recorded state. The second
-shows the project's committed milestones. No Python dependencies or containers
-need to be installed for this phase.
+If using `uv`, the equivalent is:
+
+```bash
+uv venv --python /usr/bin/python3.12 .venv
+uv pip sync --python .venv/bin/python requirements-dev.txt
+```
+
+The development requirements include the runtime packages, pytest, and Ruff.
+For only running the services, install `requirements.txt` instead. The `.in`
+files declare direct dependencies; the `.txt` files pin the resolved versions.
 
 Docker Engine with the Compose plugin will be required in Phase 5. Versions,
 machine requirements, and installation checks will be documented when the
@@ -186,34 +211,61 @@ runtime stack is added and verified.
 
 ## 9. Running the System
 
-There is no runtime in Phase 1. The future startup command is
-`docker compose up`, after the Compose file is implemented in Phase 5.
+Start the mock payment service in one terminal:
 
-For now, inspect the directory guide, read the learning notes, and use
-`git show --stat HEAD` to see what the first milestone introduced.
+```bash
+.venv/bin/python -m uvicorn payment.main:app --host 127.0.0.1 --port 8001 --no-access-log
+```
+
+Start the API in a second terminal, also from the repository root:
+
+```bash
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log
+```
+
+Open [the API documentation](http://127.0.0.1:8000/docs) or try
+`curl -i http://127.0.0.1:8000/products`. Stop either server with Ctrl+C.
+
+Run one API worker: the temporary order store is local to that process. Restarting
+or reloading it discards orders. `.env.example` documents optional overrides;
+values must be exported in your shell because `.env` is not loaded automatically.
+
+`docker compose up` becomes available in Phase 5.
 
 ## 10. Testing Telemetry
 
-Phase 1 verification covers repository structure, documentation links,
-formatting, and Git ignore rules. No runtime or telemetry test is possible yet.
+Run the Phase 2 checks:
 
-Later phases will verify these scenarios with explicit commands and expected
-results:
+```bash
+.venv/bin/python -m pytest -q
+.venv/bin/python -m ruff check app payment tests
+.venv/bin/python -m ruff format --check app payment tests
+```
 
-| Request | Planned purpose |
+Tests check order behavior, invalid inputs, JSON logs, concurrent request context,
+cross-service request IDs, and payment failure responses. They use isolated
+application instances and HTTP test transports; no running servers are needed.
+
+| Request | Current behavior |
 | --- | --- |
-| `GET /` | Basic application response |
-| `GET /products` | Product listing and database reads |
-| `POST /orders` | Order creation and business events |
-| `GET /orders/{id}` | Order retrieval |
-| `GET /slow-query` | Controlled database delay |
-| `GET /error` | Error log, error metric, and failed trace |
-| `GET /payment` | HTTP call to the separate mock payment service |
-| `GET /metrics` | Prometheus application metrics |
+| `GET /` | Service status and current storage mode |
+| `GET /products` | Three in-memory products with prices in USD cents |
+| `POST /orders` | Validate items, calculate prices, store order; return 201 |
+| `GET /orders/{id}` | Retrieve an order, or return 404 if missing |
+| `GET /slow-query` | Planned for Phase 3; currently absent |
+| `GET /error` | Intentional 500, error log, and request log |
+| `GET /payment` | HTTP simulation; 200 on success, 502/504 on dependency failures |
+| `GET /metrics` | Planned for Phase 7; currently absent |
 
-These routes are the implementation plan; none exists yet.
+Follow the [Phase 2 walkthrough](docs/phase-02-fastapi.md#try-the-api) to generate
+requests and inspect the corresponding log events. Uvicorn's own startup messages
+remain console text; application events are JSON, one per line.
 
 ## 11. Debugging Scenarios
+
+Today, call `/error` and find its matching error and completion events by request
+ID. Then stop the payment service and call `/payment`; the API should return 502
+and record the dependency failure. The Phase 2 lesson explains both exercises.
 
 The final exercise will be “checkout became slow.” We will introduce a controlled
 database delay, find the latency increase in Grafana, locate related events in
@@ -225,16 +277,16 @@ phase, so its evidence describes the same request journey.
 
 ## 12. Common Problems
 
-See [troubleshooting.md](docs/troubleshooting.md) for Phase 1 checks, including
-working-directory mistakes, Git identity, ignored files, and missing runtime
-configuration. Runtime troubleshooting will grow alongside the implementation.
+See [troubleshooting.md](docs/troubleshooting.md) for environment, import, payment,
+port, and in-memory persistence problems, along with the repository checks.
 
 ## 13. Production Improvements
 
 This repository will teach production concepts through a local lab. Future
 production discussions will cover authentication, TLS, secret management,
 telemetry retention, trace sampling, backups, availability, and alerting.
-Those capabilities have not been implemented in Phase 1.
+Those capabilities have not been implemented. The current order store is a
+teaching step and will be replaced with PostgreSQL in Phase 3.
 
 ## 14. Kubernetes Migration Path
 
@@ -244,4 +296,4 @@ to volumes. Then we will discuss Helm packaging, the Prometheus Operator,
 Elastic's Kubernetes integration, and a production Jaeger deployment.
 
 Kubernetes is a later learning extension. The next implementation milestone is
-**Phase 2: the FastAPI e-commerce service**.
+**Phase 3: PostgreSQL persistence and slow-query exercises**.
