@@ -1,0 +1,5 @@
+# Use consistent text line endings across Windows and Linux checkouts.
+* text=auto eol=lf
+
+# Keep the original brief byte-for-byte, including its existing line endings.
+docs/implementation-spec.md -text -eol whitespace=cr-at-eol
