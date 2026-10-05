@@ -212,3 +212,87 @@ before and after removing the injected delay.
 Phase 4 will introduce NGINX as the reverse proxy and add its access and error
 logs. Full application containerization, centralized collection, metrics, and
 distributed tracing remain in their later phases.
+
+## 2026-10-05 — Phase 4: NGINX and the proxy boundary
+
+Commit subject: `feat: add nginx reverse proxy`.
+
+### What changed
+
+- Added a dedicated local NGINX configuration on loopback port 8088, forwarding
+  to the API on port 8000 with route, body, query, host, and response preservation.
+- Added a Bash helper for configuration checks, startup, foreground execution,
+  graceful reload, and shutdown using this repository's prefix and PID file.
+- Added JSON access events with request IDs, status, upstream timings, and
+  connection numbers; native proxy errors remain text in a separate file.
+- Matched the API's request-ID validation and returned one ID header even for
+  proxy-generated failures. Replaced incoming forwarding headers at the entry
+  proxy and documented Uvicorn's explicit loopback trust.
+- Added proxy-only health, a 1 MiB body limit, upstream timeouts, and disabled
+  automatic upstream retries. API error responses pass through intact.
+- Added real NGINX integration tests, the Phase 4 lesson, runtime ignore rules,
+  and updated startup instructions, architecture, and troubleshooting guidance.
+
+### Why it changed
+
+Application logs cannot describe requests that fail before reaching the API.
+The reverse proxy provides a stable entry point and a second view of request
+status and duration. Comparing that view with application and database events
+helps locate the failing or slow component.
+
+### DevOps concepts introduced
+
+Reverse proxies, upstream servers, connection reuse, forwarding-header trust,
+request correlation across boundaries, access versus error logs, timing units,
+configuration validation, process prefixes and PID files, graceful reloads,
+and the difference between proxy health and end-to-end application readiness.
+
+### Production equivalent
+
+An ingress proxy commonly manages TLS, request routing, and traffic across API
+replicas. Operators compare its access/error evidence with application telemetry.
+Production requires deliberate proxy trust, network access, timeouts, retries,
+and log retention. This phase uses one API and a local unprivileged NGINX process;
+image pinning and container networking arrive in Phase 5.
+
+### Verification
+
+- All 50 pytest cases passed, including 11 real proxy integration cases, against
+  isolated PostgreSQL databases and temporary NGINX/API/payment processes.
+- Verified body and response forwarding, API docs, host-preserving redirects,
+  request-ID generation/validation, JSON escaping, and payment correlation.
+- Verified API error pass-through, proxy 502 and recovery, proxy-only health,
+  504 with an isolated shortened timeout, and 413 before reaching the API.
+- Verified correlated slow SQL at the proxy, API, and native PostgreSQL log,
+  valid reload, invalid configuration rejection, and graceful shutdown.
+- Live checks used the unchanged configuration on ports 8088, 8000, and 8001.
+  The Phase 3 order remained available, and a new order survived API restart.
+  The default five-second database query took 5.012 seconds at the proxy.
+- Parsed 14 live proxy access events, 40 application events, and the two new
+  PostgreSQL slow-query events. One retained startup log record contained NUL
+  bytes and could not be parsed as JSON; verification selected this run's new
+  records, and the historical log was preserved unchanged.
+- NGINX syntax, Bash syntax, Ruff lint/format, dependency compatibility, Compose
+  configuration, documentation links, and whitespace checks passed. All 14
+  required README sections remain, and the original specification is unchanged.
+
+### Runtime state after verification
+
+The existing PostgreSQL container was stopped when the session resumed. It was
+restarted with its original named volume and is now healthy on localhost:5432.
+The Phase 4 verification order is `400c963d-694a-42cf-af45-e31487d3e4c8`.
+The temporary proxy and Python servers were stopped; the private test container
+was removed. The pre-existing system NGINX service was left running unchanged.
+Live log files remain in ignored `nginx/runtime/` for inspection.
+
+### Learner checkpoint
+
+Follow [Phase 4](phase-04-nginx.md): compare an application 500 with an unavailable
+API's proxy 502, follow one ID across log sources, and explain why proxy health
+can succeed while product requests fail. Then restore the API and verify recovery.
+
+### Next phase
+
+Phase 5 will containerize NGINX, the API, and payment and connect them with
+PostgreSQL in the root Compose application. Centralized collection, metrics,
+and distributed tracing remain in Phases 6–8.

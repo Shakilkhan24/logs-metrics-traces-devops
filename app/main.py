@@ -62,8 +62,8 @@ def create_app(
 
     application = FastAPI(
         title="ShopSphere Order API",
-        version="0.3.0",
-        description="Phase 3: PostgreSQL persistence, SQL logs, and database delays.",
+        version="0.4.0",
+        description="Phase 4: NGINX entry point, PostgreSQL, and correlated logs.",
         lifespan=lifespan,
     )
     application.add_middleware(RequestLoggingMiddleware, service="order-api")
@@ -81,7 +81,7 @@ def create_app(
         return {
             "service": "order-api",
             "status": "ok",
-            "phase": 3,
+            "phase": 4,
             "storage": "postgresql",
         }
 

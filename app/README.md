@@ -18,9 +18,12 @@ Files and responsibilities:
 | `metrics.py` | Request, error, and database measurements | 7 |
 | `tracing.py` | OpenTelemetry setup and instrumentation | 8 |
 
-Files through Phase 3 are implemented; later-phase files are planned.
+The API and database files are implemented; Docker, metrics, and tracing files
+remain planned. Phase 4 adds a separate NGINX entry point on port 8088.
 Run from the repository root using `python -m uvicorn app.main:app` after
 activating the virtual environment and initializing PostgreSQL with
 `python -m app.database`. Database routes use ordinary `def` functions, which
 FastAPI runs in worker threads; the payment route uses async HTTP I/O.
-See the [Phase 3 lesson](../docs/phase-03-postgresql.md) for commands and examples.
+See the [Phase 3 lesson](../docs/phase-03-postgresql.md) for database examples and
+the [root startup guide](../README.md#9-running-the-system) for running the API
+behind NGINX with explicit forwarding-header trust.

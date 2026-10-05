@@ -1,6 +1,6 @@
 # Troubleshooting
 
-This guide covers repository setup, the Python services, and Phase 3 PostgreSQL.
+This guide covers repository setup, the Python services, PostgreSQL, and NGINX.
 The full container stack and telemetry pipeline checks follow in later phases.
 
 ## Creating the virtual environment fails
@@ -23,6 +23,57 @@ Another process may already be listening on 8000 or 8001. Stop your previous lab
 server, or choose another port with Uvicorn's `--port` option. If changing the
 payment port, export a matching `PAYMENT_BASE_URL` before starting the API.
 Do not terminate an unrelated process just to free the default port.
+
+The lab's NGINX listens on 8088. Change its `listen` directive if needed, then run
+`bash nginx/manage.sh test` before starting or reloading. If changing the API port,
+also update the `upstream shopsphere_api` server address in `nginx/nginx.conf`.
+
+## NGINX is missing or complains about permissions
+
+Run `nginx -v` in the same Linux/WSL shell as Python. Install the distribution's
+NGINX package if needed; `NGINX_BIN` can select an alternative executable. Start
+with `bash nginx/manage.sh start` so the configuration prefix, PID file, logs,
+and temporary files all belong to this lab. These commands do not need sudo.
+
+## The proxy health check passes, but API requests return 502
+
+`/proxy-health` checks only NGINX. Confirm that Uvicorn is listening on
+`127.0.0.1:8000` and that the proxy's upstream address matches. Check
+`nginx/runtime/error.log` for a connection error and use its `*connection` number
+with the access log's `connection` field, timestamp, and path.
+
+If `/payment` returns a JSON 502 and the API logs `payment.failed`, the proxy
+reached the API but the payment dependency failed. An `upstream_status` of 502
+alone does not distinguish these cases; inspect logs at both layers.
+
+## An application error is absent from the NGINX error log
+
+An API-generated 500 is normally a valid HTTP response that NGINX passes through.
+Look for its status and request ID in `access.jsonl`, then find the application
+exception using that ID. The native error log records proxy/connection problems,
+not every HTTP error status.
+
+## NGINX returns 504 for a slow request
+
+Inspect the native error log for an upstream timeout. The checked-in read timeout
+is 30 seconds between upstream reads, allowing the five-second SQL exercise.
+Check for local configuration changes, an overloaded API, or a stalled dependency.
+The timeout tests shorten it only in a temporary copy of the configuration.
+
+## A reload failed or an old configuration is still serving
+
+Run `bash nginx/manage.sh test` and correct the reported error. The reload helper
+tests before signalling, so an invalid file does not replace the running
+configuration. Restore valid configuration and run `bash nginx/manage.sh reload`.
+Use the same helper to stop the lab instance; system service commands target a
+different NGINX instance.
+
+## NGINX runtime files are absent from Git status
+
+This is intentional. `nginx/runtime/` contains generated logs, the PID file, and
+temporary buffers. Only configuration, the helper, tests, and documentation belong
+in the commit. Access events are JSON; native error messages are plain text and
+may include the original request URI, including query parameters.
 
 ## Payment returns 502 or 504
 

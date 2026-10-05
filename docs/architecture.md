@@ -1,17 +1,35 @@
 # Architecture
 
-Status: Phase 3 implements the order API, PostgreSQL persistence, SQL logging, and
-the mock payment service. The remaining telemetry backends are planned.
+Status: Phase 4 implements NGINX, the order API, PostgreSQL persistence, SQL
+logging, and the mock payment service. Telemetry backends remain planned.
 The [main README](../README.md#3-architecture-diagram) contains the target diagram.
 
-Current path: client → FastAPI → SQLAlchemy/Psycopg → PostgreSQL. A separate
-`GET /payment` path calls the mock payment service over HTTP. NGINX is not yet
-in this path. Order creation does not trigger payment.
+Current path: client → NGINX → FastAPI → SQLAlchemy/Psycopg → PostgreSQL. A separate
+`GET /payment` path calls the mock payment service over HTTP. Order creation does
+not trigger payment.
 
-The API and payment service run as local Python processes. The database runs
+NGINX, the API, and payment run as local processes. NGINX listens on loopback port
+8088 and proxies to the loopback API port 8000, preserving route, body, query, and
+host/port. It replaces incoming forwarding headers with values for this hop;
+Uvicorn trusts forwarding headers from loopback, which also trusts other local
+processes. This is a local lab boundary, not authentication.
+
+The database runs
 through `postgres/compose.yml` with a named volume mounted at `/var/lib/postgresql`,
 the PostgreSQL 18 image's persistent storage location. Application containers and
 the root Compose stack are Phase 5 work.
+
+The proxy has a private prefix under `nginx/` with its own PID, temporary files,
+JSON access log, and text error log in ignored `nginx/runtime/`. It runs as the
+current user. `manage.sh` validates configuration before start or reload and uses
+that prefix when signalling the lab process. An existing system NGINX service
+uses a different configuration and PID file.
+
+NGINX preserves accepted request IDs or creates a 32-character hexadecimal ID.
+It forwards that ID to the API and returns a single response header, including on
+proxy failures. Its 30-second upstream read timeout permits the five-second
+database delay; connect failures produce 502 and upstream read timeouts produce
+504. API error responses pass through without being rewritten.
 
 `products` holds the current catalogue. `orders` and `order_items` hold committed
 orders and snapshots of the purchased names/prices. Each operation opens its own
@@ -66,9 +84,11 @@ gives the required mock payment service its own source location.
 The request path is client → NGINX → FastAPI → database and/or payment service.
 The API's business logic determines which downstream operations are needed.
 
-Logs flow from application and infrastructure sources through Elastic Agent to
-Elasticsearch. Kibana queries Elasticsearch. Concrete log mounts, formats, and
-permissions will be established during the logging phase.
+Logs currently live at their sources: NGINX access JSON and error text under
+`nginx/runtime/`, application JSON on stdout, and PostgreSQL JSON in its volume.
+NGINX timings are seconds; application and SQL event durations are milliseconds.
+Phase 6 will collect and normalize these events through Elastic Agent and
+Elasticsearch, with Kibana for exploration.
 
 Metrics flow from the application and exporters to Prometheus in response to
 scrapes initiated by Prometheus. Grafana queries Prometheus. Exporters measure
@@ -85,7 +105,7 @@ carry the validated ID in a comment, making it visible in native slow/error logs
 No tracing SDK or
 export pipeline has been configured, and application logs report `trace_id: null`.
 
-NGINX is part of the request path. Forwarding trace context and producing a
+NGINX is now part of the request path. Forwarding trace context and producing a
 proxy span are separate behaviors. Native NGINX spans require explicit proxy
 instrumentation; module and image support will be checked in Phase 8 before
 claiming that the proxy appears as a span.
@@ -104,8 +124,10 @@ work therefore imply approximately 5.5 seconds overall in that scenario.
 
 ## Decisions deferred to their implementation phases
 
-The Python dependencies and PostgreSQL image are pinned. Local ports are 8000 for
-the API, 8001 for payment, and 5432 for PostgreSQL. The database and payment
+The Python dependencies and PostgreSQL image are pinned. NGINX currently uses the
+installed Linux package (verified on 1.24.0); its image will be pinned in Phase 5.
+Local ports are 8088 for the proxy, 8000 for the API, 8001 for payment, and 5432 for
+PostgreSQL. The database and payment
 connections are configurable through environment variables. Other infrastructure
 versions, telemetry storage, retention, and capacity settings will be chosen as
 those services are added. Database logs currently share the persistent data volume;

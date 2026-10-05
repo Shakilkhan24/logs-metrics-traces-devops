@@ -119,3 +119,10 @@ It includes commands and expected results for running the two services locally.
 The [Phase 3 lesson](phase-03-postgresql.md) explains persistent storage, SQLAlchemy
 models, connection pools, sessions, transactions, slow queries, and native database
 logs. It replaces the in-memory implementation while preserving the HTTP contract.
+
+## Phase 4: NGINX and the proxy boundary
+
+The [Phase 4 lesson](phase-04-nginx.md) explains reverse proxying, forwarded
+headers, shared request IDs, access/error logs, timing units, and the difference
+between an application failure and a proxy failure. It also demonstrates testing
+configuration before a graceful reload.

@@ -3,11 +3,11 @@
 A hands-on learning project for understanding how logs, metrics, and distributed
 traces help explain the behavior of an e-commerce application.
 
-**Current milestone: Phase 3 — PostgreSQL persistence and SQL observability.**
-The Python API stores products and orders in PostgreSQL, which runs in a single
-Docker container with persistent storage. Request, business, SQL, and database
-logs are available locally. NGINX, full application containerization, centralized
-logs, metrics, and distributed tracing arrive in later phases.
+**Current milestone: Phase 4 — NGINX reverse proxy and request logging.**
+The client enters through NGINX on localhost:8088, which forwards to the Python
+API on localhost:8000. PostgreSQL persists orders in Docker; the mock payment
+service runs locally on port 8001. Proxy, application, SQL, and database logs are
+available locally. Full containerization and telemetry backends follow later.
 
 The original project brief is preserved in
 [docs/implementation-spec.md](docs/implementation-spec.md).
@@ -27,7 +27,7 @@ make a focused Git commit.
 | 1 | Repository structure and learning documentation | Complete |
 | 2 | FastAPI e-commerce service and application logging | Complete |
 | 3 | PostgreSQL persistence and slow-query exercises | Complete |
-| 4 | NGINX reverse proxy and request logging | Planned |
+| 4 | NGINX reverse proxy and request logging | Complete |
 | 5 | Docker images and a runnable Docker Compose application | Planned |
 | 6 | Centralized logs with Elastic Agent, Elasticsearch, and Kibana | Planned |
 | 7 | Prometheus metrics, exporters, and Grafana dashboards | Planned |
@@ -50,12 +50,15 @@ Start with the [repository foundations](docs/learning-notes.md#phase-1-repositor
 then follow the [Phase 2 lesson](docs/phase-02-fastapi.md) to learn HTTP routes,
 request validation, process memory, and structured logging. The
 [Phase 3 lesson](docs/phase-03-postgresql.md) explains how database transactions,
-persistence, and slow-query evidence extend that foundation.
+persistence, and slow-query evidence extend that foundation. The
+[Phase 4 lesson](docs/phase-04-nginx.md) adds the proxy boundary, upstream timings,
+access logs, and error logs.
 
 ## 3. Architecture Diagram
 
-The diagram describes the **target system**. FastAPI, PostgreSQL, and the mock
-payment service are implemented; clients currently connect directly to FastAPI.
+The diagram describes the **target system**. The request path through NGINX,
+FastAPI, PostgreSQL, and the mock payment service is implemented. Telemetry
+collection, storage, and visualization backends remain planned.
 
 ```mermaid
 flowchart LR
@@ -122,16 +125,18 @@ METRICLOGTRACES/
     ├── learning-notes.md
     ├── phase-02-fastapi.md
     ├── phase-03-postgresql.md
+    ├── phase-04-nginx.md
     └── troubleshooting.md
 ```
 
 The application now has routes, HTTP schemas, SQLAlchemy models and transactions,
 connection configuration, and JSON logging. `postgres/compose.yml` starts only
-the database. `app/Dockerfile` and the root `docker-compose.yml` arrive in Phase 5.
+the database. `nginx/nginx.conf` and `nginx/manage.sh` run a separate local proxy.
+`app/Dockerfile` and the root `docker-compose.yml` arrive in Phase 5.
 
 ## 4. Request Lifecycle
 
-The target checkout path is:
+The request path is:
 
 1. A client sends a request to NGINX.
 2. NGINX forwards it to FastAPI.
@@ -139,18 +144,25 @@ The target checkout path is:
 4. When payment is needed, FastAPI calls the mock payment service over HTTP.
 5. The response returns through NGINX to the client.
 
-In Phase 3, `POST /orders` validates and saves an order and its item rows in one
+`POST /orders` validates and saves an order and its item rows in one
 PostgreSQL transaction. It returns 201 only after the commit succeeds. It does
 not charge or call payment. `GET /payment` separately demonstrates the HTTP call to
 the mock service. Both services log their requests, and the API forwards
-`X-Request-ID` to the payment service. This is log correlation, not tracing yet.
+`X-Request-ID` to the payment service. NGINX validates or generates the initial ID,
+forwards it to the API, and returns it to the client even for proxy-generated
+errors. This is log correlation, not tracing yet.
 
 ## 5. Logging Pipeline
 
 **Planned in Phase 6:** application, NGINX, and PostgreSQL logs → Elastic Agent →
 Elasticsearch → Kibana.
 
-The two applications now emit structured JSON logs to stdout. Request events
+NGINX writes JSON access events to `nginx/runtime/access.jsonl` and native text
+errors to `nginx/runtime/error.log`. Access events include request ID, client-visible
+status, upstream status, and proxy/upstream timings. The connection number helps
+match a native error line to an access event. Runtime files are ignored by Git.
+
+The two applications emit structured JSON logs to stdout. Request events
 include a UTC timestamp, service, request ID, route template, status, and duration.
 Business events describe order creation and simulated payment approval. Error
 events record failures. SQLAlchemy also emits query duration and failure events
@@ -197,8 +209,9 @@ is now implemented with the database wait included in the request duration.
 
 ## 8. Installation
 
-Use Python 3.12, Git, and a running Docker Engine with the Compose plugin. These
-commands are for Bash on Linux or WSL, run from the repository root:
+Use Python 3.12, Git, NGINX, and a running Docker Engine with the Compose plugin.
+NGINX and Python run in the same Linux/WSL environment. These commands are for
+Bash, run from the repository root:
 
 ```bash
 python3.12 -m venv .venv
@@ -220,6 +233,10 @@ For an existing environment from Phase 2, rerun the dependency installation or
 `uv pip sync` command to add SQLAlchemy and Psycopg. Verify Docker with
 `docker version` and `docker compose version`. PostgreSQL is pinned to
 `postgres:18.6-bookworm`; the Dockerized application stack is still Phase 5 work.
+
+Check `nginx -v`. Phase 4 was verified with Ubuntu's NGINX 1.24.0 package. If it is
+missing, install your distribution's NGINX package first. The lab runs on an
+unprivileged loopback port and uses its own prefix; its commands need no sudo.
 
 ## 9. Running the System
 
@@ -243,11 +260,25 @@ Then start the mock payment service in one terminal:
 Start the API in a second terminal, also from the repository root:
 
 ```bash
-.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 \
+  --no-access-log --proxy-headers --forwarded-allow-ips 127.0.0.1
 ```
 
-Open [the API documentation](http://127.0.0.1:8000/docs) or try
-`curl -i http://127.0.0.1:8000/products`. Stop either server with Ctrl+C.
+Start this lab's NGINX instance from another terminal:
+
+```bash
+bash nginx/manage.sh start
+curl -i http://127.0.0.1:8088/products
+```
+
+Open [the proxied API documentation](http://127.0.0.1:8088/docs). NGINX forwards to
+port 8000; the public lab entry point is 8088. `/proxy-health` checks NGINX itself,
+not the API or database. It can return 200 while API requests fail.
+
+Use `bash nginx/manage.sh test` to validate configuration,
+`bash nginx/manage.sh reload` to apply a valid change, and
+`bash nginx/manage.sh stop` for graceful shutdown. These commands address the lab's
+own PID file. Stop either Python server with Ctrl+C.
 
 Orders now survive API and database restarts. API instances share the database,
 while each request uses its own SQLAlchemy session. `.env.example` documents
@@ -262,23 +293,27 @@ The named data volume is retained. Adding `--volumes` would delete that data.
 
 ## 10. Testing Telemetry
 
-Run the checks with Docker available:
+Run the checks with Docker and the local NGINX binary available:
 
 ```bash
 .venv/bin/python -m pytest -q
 .venv/bin/python -m ruff check app payment tests
 .venv/bin/python -m ruff format --check app payment tests
+bash nginx/manage.sh test
 ```
 
 Tests check order behavior, invalid inputs, JSON logs, concurrent request context,
 cross-service request IDs, payment failures, persistence, rollback, database
 constraints, and slow-query logs. The suite starts and removes its own PostgreSQL
 container and creates a fresh database per test. It does not use or erase the lab
-database. Python API servers need not be running.
+database. Proxy tests run separate NGINX and Uvicorn processes on temporary local
+ports and verify forwarding, error responses, request IDs, timeouts, and reloads.
+They stop only the processes they created. Existing lab servers need not be running.
 
 | Request | Current behavior |
 | --- | --- |
 | `GET /` | Service status and current storage mode |
+| `GET /proxy-health` | NGINX-only status; available through port 8088 |
 | `GET /products` | Seeded products read from PostgreSQL, priced in USD cents |
 | `POST /orders` | Validate items, calculate prices, store order; return 201 |
 | `GET /orders/{id}` | Retrieve an order, or return 404 if missing |
@@ -287,8 +322,8 @@ database. Python API servers need not be running.
 | `GET /payment` | HTTP simulation; 200 on success, 502/504 on dependency failures |
 | `GET /metrics` | Planned for Phase 7; currently absent |
 
-Follow the [Phase 3 walkthrough](docs/phase-03-postgresql.md) to create persistent
-orders and inspect SQL and request logs. Uvicorn's own startup messages
+Follow the [Phase 4 walkthrough](docs/phase-04-nginx.md) to connect proxy, application,
+and SQL evidence for the same request. Uvicorn's own startup messages
 remain console text; application events are JSON, one per line.
 
 ## 11. Debugging Scenarios
@@ -296,6 +331,12 @@ remain console text; application events are JSON, one per line.
 Today, call `/error` and find its matching error and completion events by request
 ID. Then stop the payment service and call `/payment`; the API should return 502
 and record the dependency failure. The Phase 2 lesson explains both exercises.
+
+Use port 8088 for these requests to include the proxy's access event. Stop only
+the API and request `/products` through NGINX: expect a proxy-generated 502, a
+response request ID, and an upstream connection error in the NGINX error log.
+Restart the API to restore the path. An application 500 normally passes through
+unchanged and does not itself create a NGINX error-log entry.
 
 Try `GET /slow-query` with `X-Request-ID: phase3-slow`, then find that ID in the
 API's SQL event and PostgreSQL's slow-statement log. For a slow checkout, use
@@ -313,7 +354,7 @@ durations. This is an intentional delay exercise, not a query-index optimization
 ## 12. Common Problems
 
 See [troubleshooting.md](docs/troubleshooting.md) for environment, import, payment,
-port, database readiness, persistence, and log-location problems.
+port, database readiness, persistence, proxy errors, and log-location problems.
 
 ## 13. Production Improvements
 
@@ -333,4 +374,4 @@ to volumes. Then we will discuss Helm packaging, the Prometheus Operator,
 Elastic's Kubernetes integration, and a production Jaeger deployment.
 
 Kubernetes is a later learning extension. The next implementation milestone is
-**Phase 4: NGINX reverse proxy and request logging**.
+**Phase 5: containerize the application and assemble the full Docker Compose stack**.

@@ -1,5 +1,9 @@
 # Phase 3: PostgreSQL persistence and slow-query evidence
 
+Milestone: commit `c2b60c0`. Phase 4 adds NGINX on localhost:8088. The database
+exercises below still work directly against port 8000; use the proxy port to
+include NGINX access logs, following the [Phase 4 lesson](phase-04-nginx.md).
+
 Orders now survive application restarts and are shared by API instances. This
 phase replaces the Phase 2 memory store with SQLAlchemy and PostgreSQL while
 keeping the product/order HTTP contract. Prices remain integer USD cents.

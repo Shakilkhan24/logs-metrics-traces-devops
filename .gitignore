@@ -25,6 +25,7 @@ dist/
 /data/
 /logs/
 /tmp/
+/nginx/runtime/
 
 # Personal editor settings and operating-system metadata.
 .idea/
