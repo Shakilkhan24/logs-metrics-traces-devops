@@ -126,3 +126,11 @@ The [Phase 4 lesson](phase-04-nginx.md) explains reverse proxying, forwarded
 headers, shared request IDs, access/error logs, timing units, and the difference
 between an application failure and a proxy failure. It also demonstrates testing
 configuration before a graceful reload.
+
+## Phase 5: Images, containers, and Compose
+
+The [Phase 5 lesson](phase-05-docker-compose.md) explains the difference between
+an image and a container, cached build layers, Docker service discovery, health
+checks, startup dependencies, environment variables, volumes, and log streams.
+The persistence and API replacement exercises show which state survives each
+lifecycle operation.

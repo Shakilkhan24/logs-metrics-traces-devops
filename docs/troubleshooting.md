@@ -1,7 +1,55 @@
 # Troubleshooting
 
-This guide covers repository setup, the Python services, PostgreSQL, and NGINX.
-The full container stack and telemetry pipeline checks follow in later phases.
+This guide covers the Phase 5 Compose application and the earlier native
+Python/NGINX workflow. Telemetry pipeline checks follow in later phases.
+
+## Compose startup fails or a service is unhealthy
+
+Run `docker compose ps --all`, then inspect the failing service with
+`docker compose logs --tail 50 <service>`. PostgreSQL health gates `db-init`;
+successful initialization and payment health gate the API; API health gates
+NGINX. The API's probe calls `/products`, so a database problem affects readiness.
+Use `docker compose config --quiet` to check configuration before startup.
+
+An unhealthy flag alone does not restart a running process. Repair the dependency
+and retry, or restart the affected service if its process requires it. Dependency
+conditions primarily govern startup, not continuous recovery orchestration.
+
+## db-init shows Exited (0)
+
+This is expected. The one-time initialization command succeeded. An exit code
+other than zero blocks API startup; inspect `docker compose logs db-init`.
+After fixing configuration, run `docker compose up -d --wait` again. Do not use
+volume deletion as a routine initialization repair: it erases orders.
+
+## Edited Python or proxy configuration is not taking effect
+
+These files are copied into images. Run `docker compose up --build -d --wait`
+after editing them. `docker compose restart` uses the existing image and does
+not rebuild. Inspect the active proxy with `docker compose exec nginx nginx -T`.
+The database configuration is a read-only bind mount; restart PostgreSQL to
+apply startup-only settings.
+
+## localhost cannot reach another container
+
+Inside a container, localhost is that container. Compose configures the API with
+`postgres:5432` and `payment:8001` and NGINX with `api:8000`. Only NGINX has a host
+port. Inspect DNS with:
+
+```bash
+docker compose exec api python -c "import socket; print(socket.gethostbyname('postgres'))"
+```
+
+The native localhost URLs in `.env.example` apply to host Python processes,
+not the Compose services.
+
+## An API replacement briefly produces proxy failures
+
+The new container may have a different address. The container proxy uses Docker
+DNS with a five-second refresh interval; retry after the API becomes ready and
+DNS refreshes. Inspect `docker compose logs nginx api` for upstream and startup
+errors. The native Phase 4 configuration uses a fixed localhost upstream and
+does not apply inside the container network.
 
 ## Creating the virtual environment fails
 
@@ -19,7 +67,11 @@ Install `requirements-dev.txt` into that environment. Avoid launching
 
 ## The port is already in use
 
-Another process may already be listening on 8000 or 8001. Stop your previous lab
+The Compose proxy publishes port 8088. Stop an earlier native lab proxy with
+`bash nginx/manage.sh stop`, or use `SHOPSPHERE_PORT=8089 docker compose up -d --wait`.
+Keep that override in `.env` if using the alternate port for later commands.
+
+For native runs, another process may already be listening on 8000 or 8001. Stop your previous lab
 server, or choose another port with Uvicorn's `--port` option. If changing the
 payment port, export a matching `PAYMENT_BASE_URL` before starting the API.
 Do not terminate an unrelated process just to free the default port.
@@ -30,6 +82,7 @@ also update the `upstream shopsphere_api` server address in `nginx/nginx.conf`.
 
 ## NGINX is missing or complains about permissions
 
+This section concerns native runs; the Compose image includes NGINX.
 Run `nginx -v` in the same Linux/WSL shell as Python. Install the distribution's
 NGINX package if needed; `NGINX_BIN` can select an alternative executable. Start
 with `bash nginx/manage.sh start` so the configuration prefix, PID file, logs,
@@ -37,19 +90,24 @@ and temporary files all belong to this lab. These commands do not need sudo.
 
 ## The proxy health check passes, but API requests return 502
 
-`/proxy-health` checks only NGINX. Confirm that Uvicorn is listening on
+`/proxy-health` checks only NGINX. In Compose, check `docker compose ps api`
+and `docker compose logs nginx api`. A stopped Docker peer can produce 502 or
+504 depending on whether connection failure or timeout is observed.
+
+For native runs, confirm that Uvicorn is listening on
 `127.0.0.1:8000` and that the proxy's upstream address matches. Check
 `nginx/runtime/error.log` for a connection error and use its `*connection` number
 with the access log's `connection` field, timestamp, and path.
 
-If `/payment` returns a JSON 502 and the API logs `payment.failed`, the proxy
+If `/payment` returns a JSON 502/504 and the API logs `payment.failed`, the proxy
 reached the API but the payment dependency failed. An `upstream_status` of 502
 alone does not distinguish these cases; inspect logs at both layers.
 
 ## An application error is absent from the NGINX error log
 
 An API-generated 500 is normally a valid HTTP response that NGINX passes through.
-Look for its status and request ID in `access.jsonl`, then find the application
+Look for its status and request ID in `docker compose logs nginx` (or native
+`access.jsonl`), then find the application
 exception using that ID. The native error log records proxy/connection problems,
 not every HTTP error status.
 
@@ -60,7 +118,7 @@ is 30 seconds between upstream reads, allowing the five-second SQL exercise.
 Check for local configuration changes, an overloaded API, or a stalled dependency.
 The timeout tests shorten it only in a temporary copy of the configuration.
 
-## A reload failed or an old configuration is still serving
+## A native NGINX reload failed or an old configuration is still serving
 
 Run `bash nginx/manage.sh test` and correct the reported error. The reload helper
 tests before signalling, so an invalid file does not replace the running
@@ -77,25 +135,38 @@ may include the original request URI, including query parameters.
 
 ## Payment returns 502 or 504
 
-Check that the mock service is running and responds at
+In Compose, check `docker compose ps payment` and `docker compose logs payment api`.
+Use `docker compose start payment` to recover from the stop exercise. A missing
+Docker peer may cause a connection timeout (504) instead of a prompt failure (502).
+
+For native runs, check that the mock service is running and responds at
 `http://127.0.0.1:8001/`. Then inspect the API's `payment.failed` event using the
 response's `X-Request-ID`. A connection failure, upstream HTTP error, or invalid
 response produces 502; an HTTP client timeout produces 504.
 
 The defaults assume both processes run in the same Linux/WSL environment.
-`.env.example` is documentation, not an automatically loaded configuration file.
+Native Python does not load `.env` automatically; Compose does read it for interpolation.
 For another address, export `PAYMENT_BASE_URL` in the API's shell before startup.
 
 ## An order disappeared
 
-In Phase 3, restarting the API should preserve orders. Check whether `DATABASE_URL`
-points to the same database and whether the named data volume still exists.
+Restarting the API should preserve orders. Check the Compose project name and
+volume with `docker compose ps --all` and `docker volume ls`. The root stack uses
+`shopsphere_postgres_data`; the earlier native database uses
+`shopsphere-phase3_postgres_data`. They hold different orders. Changing the
+project name selects different resources; it does not migrate data.
+
+For native runs, also check whether `DATABASE_URL` points to the expected database.
 `docker compose down` retains it; `down --volumes` deletes it. Orders created under
 the old Phase 2 in-memory version cannot be recovered after that process exits.
 
 ## The API reports that the database is not ready
 
-Run `docker compose -f postgres/compose.yml ps`, then start the database with
+For the complete application, run `docker compose ps --all`, inspect
+`docker compose logs db-init postgres api`, and correct the startup failure.
+`docker compose up -d --wait` includes initialization and health ordering.
+
+For native runs, use `docker compose -f postgres/compose.yml ps`, then start with
 `docker compose -f postgres/compose.yml up -d --wait`. Run
 `.venv/bin/python -m app.database` before starting the API to create missing tables
 and seed products. Verify that your exported `DATABASE_URL` matches the database.
@@ -120,7 +191,9 @@ before reuse.
 ## Docker logs do not show the slow SQL statement
 
 PostgreSQL's logging collector writes runtime events into `$PGDATA/log/` inside
-the persistent volume. Use the native JSON inspection command in the
+the persistent volume. For the root stack, run
+`docker compose exec -T postgres sh -c 'cat "$PGDATA"/log/*.json'`.
+For the older native database, use the inspection command in the
 [Phase 3 lesson](phase-03-postgresql.md#inspect-native-postgresql-logs).
 `docker compose logs` mainly shows startup messages once the collector is active.
 Statements shorter than 250 ms are not included in the native slow-statement log.
@@ -179,10 +252,10 @@ Use `git ls-files` to inspect the files Git is already tracking.
 
 ## Docker Compose reports that no configuration file exists
 
-This is expected before Phase 5, when `docker-compose.yml` is introduced.
-For Phase 3, specify `-f postgres/compose.yml` for the database and use the local
-Python commands for the application. Check the phase table in the
-[README](../README.md#1-project-motivation) before following later-phase commands.
+Run from the repository root, which contains `docker-compose.yml`, or pass its
+path with `docker compose -f /path/to/docker-compose.yml ...`. Earlier native
+database exercises explicitly use `-f postgres/compose.yml`; that file starts
+only the separate Phase 3 database.
 
 ## Git shows unexpected line-ending changes
 

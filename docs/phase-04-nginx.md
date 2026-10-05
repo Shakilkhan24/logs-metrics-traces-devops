@@ -1,5 +1,10 @@
 # Phase 4: NGINX and the proxy boundary
 
+Milestone: commit `5cdc808`. This lesson preserves the native process workflow.
+Phase 5 adds the [Compose workflow](phase-05-docker-compose.md); stop its proxy
+before using the native proxy on the same host port. Shared logging and forwarding
+rules now live in `nginx/includes/` and are included by both configurations.
+
 This phase puts a reverse proxy in front of the working application. It gives
 clients one entry point and records requests even when the API is unavailable.
 The new files are `nginx/nginx.conf`, `nginx/manage.sh`, and
@@ -39,8 +44,27 @@ propagates the same request ID. Order creation does not call payment.
 
 ## Run the local proxy
 
-Follow the [startup guide](../README.md#9-running-the-system) to start PostgreSQL,
-initialize the tables, and run payment on port 8001 and the API on port 8000.
+After installing the [development requirements](../README.md#8-installation),
+start the native workflow's database and initialize its tables:
+
+```bash
+docker compose -f postgres/compose.yml up -d --wait
+.venv/bin/python -m app.database
+```
+
+Run payment in one terminal, from the repository root:
+
+```bash
+.venv/bin/python -m uvicorn payment.main:app --host 127.0.0.1 --port 8001 --no-access-log
+```
+
+Run the API in a second terminal:
+
+```bash
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 \
+  --no-access-log --proxy-headers --forwarded-allow-ips 127.0.0.1
+```
+
 NGINX and Python must run in the same Linux/WSL environment. Check the installed
 binary with `nginx -v`; this milestone was verified with NGINX 1.24.0.
 
@@ -205,7 +229,7 @@ tail -n 10 nginx/runtime/error.log
 
 The product request now returns a proxy-generated HTML 502 with a request ID.
 The health route still returns 200. There is no corresponding API event because
-the request could not reach it. Restart the API with the root guide's command
+the request could not reach it. Restart the API with the command above
 and confirm `/products` returns 200 again.
 
 The native error log is **text**, recording connection, timeout, and other NGINX

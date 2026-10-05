@@ -1,0 +1,15 @@
+# Allow only the source and configuration needed by the two image builds.
+**
+!requirements.txt
+!app/
+!app/*.py
+!app/Dockerfile
+!payment/
+!payment/*.py
+!postgres/
+!postgres/init.sql
+!nginx/
+!nginx/Dockerfile
+!nginx/container.conf
+!nginx/includes/
+!nginx/includes/*.conf

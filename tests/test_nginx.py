@@ -78,10 +78,14 @@ def proxy_factory(tmp_path, db_settings):
         configuration = configuration.replace(
             "listen 127.0.0.1:8088;", f"listen 127.0.0.1:{proxy_port};"
         ).replace("server 127.0.0.1:8000;", f"server 127.0.0.1:{api_port};")
-        configuration = configuration.replace(
-            "proxy_read_timeout 30s;", f"proxy_read_timeout {read_timeout};"
-        )
         (prefix / "nginx.conf").write_text(configuration)
+        shutil.copytree(ROOT / "nginx/includes", prefix / "includes")
+        server_configuration = prefix / "includes/server.conf"
+        server_configuration.write_text(
+            server_configuration.read_text().replace(
+                "proxy_read_timeout 30s;", f"proxy_read_timeout {read_timeout};"
+            )
+        )
         shutil.copyfile(ROOT / "nginx/manage.sh", prefix / "manage.sh")
         paths = {name: prefix / f"{name}.jsonl" for name in ["api", "payment"]}
         error_path = prefix / "process.stderr"

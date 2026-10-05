@@ -1,6 +1,21 @@
 # PostgreSQL
 
-Phase 3 uses PostgreSQL 18.6 for products, orders, and order items.
+PostgreSQL 18.6 stores products, orders, and order items. Phase 5 runs it as the
+`postgres` service in the root Compose stack, with no published host port.
+`db-init` creates tables and seeds products after database health succeeds.
+
+```bash
+docker compose up --build -d --wait
+docker compose exec postgres psql -U shopsphere -d shopsphere
+docker compose exec -T postgres sh -c 'cat "$PGDATA"/log/*.json'
+```
+
+The root project owns `shopsphere_postgres_data`. It is separate from the earlier
+native lab's `shopsphere-phase3_postgres_data`; neither workflow automatically
+copies orders from the other. `down` retains the selected project's volume;
+`down --volumes` deletes it. See the [Phase 5 lesson](../docs/phase-05-docker-compose.md).
+
+The files and commands below support the earlier native Phase 3 workflow.
 
 | File | Purpose |
 | --- | --- |
@@ -33,5 +48,4 @@ Stop with `docker compose -f postgres/compose.yml stop`. `down` removes the
 container and network while retaining the volume; `down --volumes` deletes data.
 No runtime database files are committed to Git.
 
-The root application Compose stack arrives in Phase 5. Log collection and database
-metrics arrive in Phases 6 and 7.
+Log collection and database metrics arrive in Phases 6 and 7.

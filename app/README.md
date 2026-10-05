@@ -18,12 +18,20 @@ Files and responsibilities:
 | `metrics.py` | Request, error, and database measurements | 7 |
 | `tracing.py` | OpenTelemetry setup and instrumentation | 8 |
 
-The API and database files are implemented; Docker, metrics, and tracing files
-remain planned. Phase 4 adds a separate NGINX entry point on port 8088.
-Run from the repository root using `python -m uvicorn app.main:app` after
+The API, database, and Docker files are implemented. Metrics and tracing remain
+planned. The Compose API is reached through NGINX on host port 8088.
+
+`Dockerfile` uses Python 3.12.15 and the pinned runtime requirements, includes the
+SQL seed file, and runs as UID 10001. Compose builds API, payment, and `db-init`
+images from this recipe with separate tags and shared cached layers. Different
+commands select their roles. Source is copied into images, so rebuild after edits.
+
+For the native workflow, run from the repository root using
+`python -m uvicorn app.main:app` after
 activating the virtual environment and initializing PostgreSQL with
 `python -m app.database`. Database routes use ordinary `def` functions, which
 FastAPI runs in worker threads; the payment route uses async HTTP I/O.
 See the [Phase 3 lesson](../docs/phase-03-postgresql.md) for database examples and
-the [root startup guide](../README.md#9-running-the-system) for running the API
-behind NGINX with explicit forwarding-header trust.
+the [native Phase 4 commands](../docs/phase-04-nginx.md#run-the-local-proxy) for
+running behind NGINX. The [Phase 5 lesson](../docs/phase-05-docker-compose.md)
+explains container startup, service-name URLs, and forwarding-header trust.

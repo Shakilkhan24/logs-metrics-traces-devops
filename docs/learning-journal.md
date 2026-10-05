@@ -296,3 +296,103 @@ can succeed while product requests fail. Then restore the API and verify recover
 Phase 5 will containerize NGINX, the API, and payment and connect them with
 PostgreSQL in the root Compose application. Centralized collection, metrics,
 and distributed tracing remain in Phases 6–8.
+
+## 2026-10-05 — Phase 5: Images, containers, and Compose
+
+Commit subject: `feat: containerize complete application`.
+
+### What changed
+
+- Added a Python Dockerfile with pinned dependencies and source, reused for the
+  API, payment, and initializer with distinct image tags and runtime commands.
+- Added the NGINX Dockerfile and container configuration. Base images pin Python
+  3.12.15, NGINX 1.30.5, and PostgreSQL 18.6 by both version and digest.
+- Added the root Compose application with four long-running services, one-time
+  database initialization, startup health dependencies, a bridge network, and
+  a project-owned persistent PostgreSQL volume.
+- Published only NGINX at localhost:8088. Internal calls use service names, and
+  NGINX refreshes Docker DNS after API container replacement.
+- Ran Python and NGINX as non-root users with read-only root filesystems and
+  temporary writable mounts. Restricted build inputs with `.dockerignore`.
+- Shared NGINX request-ID, forwarding, and log rules between native and container
+  configurations. Container logs use stdout/stderr with bounded Docker rotation.
+- Added an isolated Compose lifecycle check, the Phase 5 lesson, and updated
+  startup, environment, architecture, and troubleshooting documentation.
+
+### Why it changed
+
+The application previously needed host-installed Python and NGINX plus several
+manual startup steps. Versioned images and Compose now package those requirements
+and describe how the services connect. Health conditions make startup ordering
+explicit, while a volume separates durable orders from replaceable containers.
+
+### DevOps concepts introduced
+
+Image layers and build caching, build contexts, image tags and digests, containers
+and process commands, non-root execution, project isolation, bridge networks,
+service discovery, published versus internal ports, environment interpolation,
+health checks, initialization jobs, persistent volumes, temporary filesystems,
+graceful process shutdown, and container log streams.
+
+### Production equivalent
+
+A team builds versioned images and deploys them with explicit networking,
+configuration, readiness, and persistent storage. Production also needs secrets,
+schema migrations, image update policies, backups, capacity planning, TLS,
+access control, and redundancy. This lab has one API replica, local teaching
+credentials, and a shared trusted project network; it does not implement those
+operating controls merely by running in containers.
+
+### Verification
+
+- All images built successfully with Docker Engine 28.3.0 and Compose 2.38.1.
+- All 50 existing pytest cases passed after extracting the shared proxy rules.
+- The Compose smoke suite used a unique project and temporary port, verified
+  that failed initialization blocks the API, then verified successful startup
+  and the configured health checks.
+- Checked non-root Python/NGINX users, read-only root filesystems, and that API,
+  payment, and PostgreSQL had no published host ports.
+- Verified catalogue access, order creation/lookup, API docs, payment calls,
+  application errors, request IDs, and correlated five-second SQL evidence in
+  proxy, application, and native PostgreSQL logs.
+- Verified payment and database outage responses and recovery, database-aware
+  API readiness, and proxy-only health during an API outage. Docker peer loss
+  can produce a connection timeout (504) instead of immediate refusal (502).
+- Forced the replacement API onto a different IP by reserving its old address
+  in the disposable network. NGINX recovered without container restart.
+- Verified an order survived complete container/network removal and subsequent
+  startup using the retained volume; repeated initialization preserved it.
+- The smoke project, temporary address holder, network, and data volume were
+  removed after the checks. The regular lab projects were not test targets.
+- Live checks on localhost:8088 verified Phase 5 metadata, products, order
+  creation/retrieval, docs, and payment. Checked runtime image contents excluded
+  local credentials, Git history, virtual environments, tests, and runtime logs.
+- Both earlier verification orders remained in the separate Phase 3 database.
+- Ruff lint/format, Bash and NGINX syntax, Compose configuration, image dependency
+  compatibility, documentation links, and whitespace checks passed. The original
+  specification and all 14 required README sections are preserved.
+
+### Runtime state after verification
+
+The root `shopsphere` stack is running with four healthy services and successful
+`db-init` exit code 0. The entry point is `http://127.0.0.1:8088`, and the root
+volume is `shopsphere_postgres_data`. Verification order
+`ab88ce70-07a0-4092-ba7a-65d20daf60b2` remains in that database.
+
+The earlier `shopsphere-phase3` database was stopped when the session resumed;
+it was restarted and its retained orders verified. It is healthy on host port
+5432 with its original, separate volume. The two projects do not share data.
+The user's untracked `cmd.sh` was left untouched.
+
+### Learner checkpoint
+
+Follow [Phase 5](phase-05-docker-compose.md): inspect service DNS, explain the
+initialization dependency, retrieve an order after `down`/`up`, and recover the
+application after stopping each dependency. Explain why rebuilding an image,
+restarting a container, and deleting a volume have different effects.
+
+### Next phase
+
+Phase 6 will collect application, NGINX, and PostgreSQL logs with Elastic Agent,
+store them in Elasticsearch, and make them searchable in Kibana. Metrics and
+distributed tracing remain in Phases 7 and 8.

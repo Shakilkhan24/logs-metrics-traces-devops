@@ -1,35 +1,49 @@
 # Architecture
 
-Status: Phase 4 implements NGINX, the order API, PostgreSQL persistence, SQL
-logging, and the mock payment service. Telemetry backends remain planned.
+Status: Phase 5 runs NGINX, the order API, PostgreSQL, and mock payment through
+Docker Compose. Telemetry backends remain planned.
 The [main README](../README.md#3-architecture-diagram) contains the target diagram.
 
 Current path: client → NGINX → FastAPI → SQLAlchemy/Psycopg → PostgreSQL. A separate
 `GET /payment` path calls the mock payment service over HTTP. Order creation does
 not trigger payment.
 
-NGINX, the API, and payment run as local processes. NGINX listens on loopback port
-8088 and proxies to the loopback API port 8000, preserving route, body, query, and
-host/port. It replaces incoming forwarding headers with values for this hop;
-Uvicorn trusts forwarding headers from loopback, which also trusts other local
-processes. This is a local lab boundary, not authentication.
+The root `docker-compose.yml` defines project `shopsphere`, a bridge network,
+four long-running services, and the one-time `db-init` service. Only NGINX is
+published to the host, at `127.0.0.1:8088`. It forwards to `api:8000`; the API uses
+`postgres:5432` and `payment:8001`. Service names resolve through Docker DNS.
+NGINX re-resolves its upstream so an API address change needs no proxy restart.
 
-The database runs
-through `postgres/compose.yml` with a named volume mounted at `/var/lib/postgresql`,
-the PostgreSQL 18 image's persistent storage location. Application containers and
-the root Compose stack are Phase 5 work.
+NGINX replaces caller-supplied forwarding headers. The container API trusts
+forwarding headers from all peers because it is confined to this lab's project
+network with no host port. Other containers on that network share this trust;
+production must narrow the trusted proxy/network boundary.
 
-The proxy has a private prefix under `nginx/` with its own PID, temporary files,
-JSON access log, and text error log in ignored `nginx/runtime/`. It runs as the
-current user. `manage.sh` validates configuration before start or reload and uses
-that prefix when signalling the lab process. An existing system NGINX service
-uses a different configuration and PID file.
+PostgreSQL health gates `db-init`, successful initialization and payment health
+gate API startup, and API health gates NGINX startup. The API health check reads
+`/products`, covering database access. The proxy health check covers only NGINX.
+Dependency conditions control startup; they do not continuously restart dependent
+services. Application pools and the proxy resolver handle recovery.
+
+The database's `shopsphere_postgres_data` volume is mounted at
+`/var/lib/postgresql`, the PostgreSQL 18 image's persistent storage location.
+Images and containers can be replaced while this volume retains orders.
+The older native workflow retains its separate `shopsphere-phase3` database
+project, local Python processes, and private NGINX prefix under `nginx/`.
+It uses different data and cannot share host port 8088 with the Compose proxy.
+
+Python containers run as UID 10001; NGINX uses its non-root image user. Their
+filesystems are read-only except temporary `/tmp` mounts. Runtime source and
+NGINX configuration are baked into images; PostgreSQL configuration is mounted
+read-only from the repository. Native and container proxies share the files
+under `nginx/includes/` for logging and request forwarding.
 
 NGINX preserves accepted request IDs or creates a 32-character hexadecimal ID.
 It forwards that ID to the API and returns a single response header, including on
 proxy failures. Its 30-second upstream read timeout permits the five-second
-database delay; connect failures produce 502 and upstream read timeouts produce
-504. API error responses pass through without being rewritten.
+database delay. Refused connections or unavailable upstreams produce 502;
+upstream connection/read timeouts produce 504. API error responses pass through
+without being rewritten.
 
 `products` holds the current catalogue. `orders` and `order_items` hold committed
 orders and snapshots of the purchased names/prices. Each operation opens its own
@@ -71,8 +85,7 @@ Application source belongs in `app/` and `payment/`. Configuration for a service
 belongs in its named directory. Cross-cutting explanations belong in `docs/`.
 This lets a learner locate a change by asking which component owns the behavior.
 
-The root Compose file will eventually connect the containers, networks, storage,
-and settings. It is deliberately introduced in Phase 5 with actual services.
+The root Compose file connects the containers, network, storage, and settings.
 The files listed in the original brief are planned deliverables, not empty
 executable placeholders in Phase 1.
 
@@ -84,8 +97,11 @@ gives the required mock payment service its own source location.
 The request path is client → NGINX → FastAPI → database and/or payment service.
 The API's business logic determines which downstream operations are needed.
 
-Logs currently live at their sources: NGINX access JSON and error text under
-`nginx/runtime/`, application JSON on stdout, and PostgreSQL JSON in its volume.
+Logs currently live at their sources: NGINX access JSON on stdout and error text
+on stderr, application JSON on stdout, and PostgreSQL JSON in its volume.
+Compose sets Docker log rotation to 10 MB and three files per container. This
+does not collect logs centrally or retain them after container removal. Native
+Phase 4 NGINX runs still write to ignored `nginx/runtime/`.
 NGINX timings are seconds; application and SQL event durations are milliseconds.
 Phase 6 will collect and normalize these events through Elastic Agent and
 Elasticsearch, with Kibana for exploration.
@@ -124,11 +140,11 @@ work therefore imply approximately 5.5 seconds overall in that scenario.
 
 ## Decisions deferred to their implementation phases
 
-The Python dependencies and PostgreSQL image are pinned. NGINX currently uses the
-installed Linux package (verified on 1.24.0); its image will be pinned in Phase 5.
-Local ports are 8088 for the proxy, 8000 for the API, 8001 for payment, and 5432 for
-PostgreSQL. The database and payment
-connections are configurable through environment variables. Other infrastructure
+Python dependencies are pinned. The container bases pin Python 3.12.15, NGINX
+1.30.5, and PostgreSQL 18.6 by version and digest. `SHOPSPHERE_PORT` changes the
+proxy's host port; `PAYMENT_TIMEOUT_SECONDS` changes the HTTP client timeout.
+Compose injects service-name connection URLs; native defaults still use localhost.
+Other infrastructure
 versions, telemetry storage, retention, and capacity settings will be chosen as
 those services are added. Database logs currently share the persistent data volume;
 their collection and retention policy will be revisited in Phase 6.
