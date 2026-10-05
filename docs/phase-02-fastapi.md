@@ -1,5 +1,10 @@
 # Phase 2: FastAPI and structured logging
 
+Historical milestone: commit `abcd91c`. The current Phase 3 code uses PostgreSQL,
+so orders now survive restarts and database initialization is required. Use the
+[Phase 3 lesson](phase-03-postgresql.md) for current startup and persistence
+exercises; this lesson preserves the explanation of the earlier in-memory stage.
+
 The application now accepts HTTP requests, validates order data, calls a separate
 mock service, and writes JSON events. Follow the installation and two-terminal
 startup commands in the [README](../README.md#8-installation) first.

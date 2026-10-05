@@ -1,12 +1,27 @@
 # Architecture
 
-Status: Phase 2 implements the order API and mock payment service with JSON logs.
-The order store is in memory. The rest of the architecture remains planned.
+Status: Phase 3 implements the order API, PostgreSQL persistence, SQL logging, and
+the mock payment service. The remaining telemetry backends are planned.
 The [main README](../README.md#3-architecture-diagram) contains the target diagram.
 
-Current path: client → FastAPI → in-memory order store. A separate `GET /payment`
-path calls the mock payment service over HTTP. NGINX and PostgreSQL are not yet
-in this path. Order creation does not trigger payment in Phase 2.
+Current path: client → FastAPI → SQLAlchemy/Psycopg → PostgreSQL. A separate
+`GET /payment` path calls the mock payment service over HTTP. NGINX is not yet
+in this path. Order creation does not trigger payment.
+
+The API and payment service run as local Python processes. The database runs
+through `postgres/compose.yml` with a named volume mounted at `/var/lib/postgresql`,
+the PostgreSQL 18 image's persistent storage location. Application containers and
+the root Compose stack are Phase 5 work.
+
+`products` holds the current catalogue. `orders` and `order_items` hold committed
+orders and snapshots of the purchased names/prices. Each operation opens its own
+SQLAlchemy session; order creation commits the order and its items together
+before the route logs success. Later price changes do not rewrite earlier orders.
+
+Database routes run synchronous Psycopg I/O in FastAPI worker threads. One engine
+per API instance manages a pool of up to ten connections (five retained plus five
+overflow); sessions are never shared across concurrent requests. Startup checks
+the database, and shutdown disposes the pool.
 
 ## System boundaries
 
@@ -65,7 +80,9 @@ FastAPI and payment services will propagate trace context over HTTP, while
 SQLAlchemy instrumentation will create database client spans in the API process.
 Those spans do not require installing an application SDK inside PostgreSQL.
 
-Phase 2 propagates `X-Request-ID` for log correlation only. No tracing SDK or
+The services propagate `X-Request-ID` for log correlation only. SQL statements also
+carry the validated ID in a comment, making it visible in native slow/error logs.
+No tracing SDK or
 export pipeline has been configured, and application logs report `trace_id: null`.
 
 NGINX is part of the request path. Forwarding trace context and producing a
@@ -87,8 +104,9 @@ work therefore imply approximately 5.5 seconds overall in that scenario.
 
 ## Decisions deferred to their implementation phases
 
-Phase 2 pins the Python dependencies and documents local ports 8000 for the API
-and 8001 for payment. The API's payment connection is configurable through
-environment variables. Infrastructure versions, network names, storage paths,
-retention, and resource requirements will be chosen and verified as those
-services are added.
+The Python dependencies and PostgreSQL image are pinned. Local ports are 8000 for
+the API, 8001 for payment, and 5432 for PostgreSQL. The database and payment
+connections are configurable through environment variables. Other infrastructure
+versions, telemetry storage, retention, and capacity settings will be chosen as
+those services are added. Database logs currently share the persistent data volume;
+their collection and retention policy will be revisited in Phase 6.

@@ -3,10 +3,11 @@
 A hands-on learning project for understanding how logs, metrics, and distributed
 traces help explain the behavior of an e-commerce application.
 
-**Current milestone: Phase 2 — FastAPI services and structured application logs.**
-The order API and mock payment service run locally with Python. Orders are stored
-in process memory and reset on restart. PostgreSQL, containers, centralized logs,
-metrics, and distributed tracing arrive in later phases.
+**Current milestone: Phase 3 — PostgreSQL persistence and SQL observability.**
+The Python API stores products and orders in PostgreSQL, which runs in a single
+Docker container with persistent storage. Request, business, SQL, and database
+logs are available locally. NGINX, full application containerization, centralized
+logs, metrics, and distributed tracing arrive in later phases.
 
 The original project brief is preserved in
 [docs/implementation-spec.md](docs/implementation-spec.md).
@@ -25,7 +26,7 @@ make a focused Git commit.
 | --- | --- | --- |
 | 1 | Repository structure and learning documentation | Complete |
 | 2 | FastAPI e-commerce service and application logging | Complete |
-| 3 | PostgreSQL persistence and slow-query exercises | Planned |
+| 3 | PostgreSQL persistence and slow-query exercises | Complete |
 | 4 | NGINX reverse proxy and request logging | Planned |
 | 5 | Docker images and a runnable Docker Compose application | Planned |
 | 6 | Centralized logs with Elastic Agent, Elasticsearch, and Kibana | Planned |
@@ -47,12 +48,14 @@ Later phases will attach trace IDs to application logs to connect the evidence.
 
 Start with the [repository foundations](docs/learning-notes.md#phase-1-repository-foundations),
 then follow the [Phase 2 lesson](docs/phase-02-fastapi.md) to learn HTTP routes,
-request validation, process memory, and structured logging.
+request validation, process memory, and structured logging. The
+[Phase 3 lesson](docs/phase-03-postgresql.md) explains how database transactions,
+persistence, and slow-query evidence extend that foundation.
 
 ## 3. Architecture Diagram
 
-The diagram describes the **target system**. Phase 2 implements FastAPI and the
-mock payment service; clients currently connect directly to FastAPI.
+The diagram describes the **target system**. FastAPI, PostgreSQL, and the mock
+payment service are implemented; clients currently connect directly to FastAPI.
 
 ```mermaid
 flowchart LR
@@ -97,7 +100,7 @@ METRICLOGTRACES/
 ├── requirements-dev.txt     # Pinned test and lint environment
 ├── pyproject.toml           # Test and lint settings
 ├── .python-version          # Python 3.12
-├── .env.example             # Documented payment connection settings
+├── .env.example             # Documented service connection settings
 ├── app/                     # FastAPI application
 ├── payment/                 # Separate mock service for distributed calls
 ├── nginx/                   # Reverse proxy configuration
@@ -118,12 +121,13 @@ METRICLOGTRACES/
     ├── learning-journal.md
     ├── learning-notes.md
     ├── phase-02-fastapi.md
+    ├── phase-03-postgresql.md
     └── troubleshooting.md
 ```
 
-The application now has routes, request/response schemas, an in-memory store,
-configuration, and JSON logging. `app/Dockerfile` and `docker-compose.yml` arrive
-in Phase 5.
+The application now has routes, HTTP schemas, SQLAlchemy models and transactions,
+connection configuration, and JSON logging. `postgres/compose.yml` starts only
+the database. `app/Dockerfile` and the root `docker-compose.yml` arrive in Phase 5.
 
 ## 4. Request Lifecycle
 
@@ -135,8 +139,9 @@ The target checkout path is:
 4. When payment is needed, FastAPI calls the mock payment service over HTTP.
 5. The response returns through NGINX to the client.
 
-In Phase 2, `POST /orders` validates and stores an order in memory; it does not
-charge or call payment. `GET /payment` separately demonstrates the HTTP call to
+In Phase 3, `POST /orders` validates and saves an order and its item rows in one
+PostgreSQL transaction. It returns 201 only after the commit succeeds. It does
+not charge or call payment. `GET /payment` separately demonstrates the HTTP call to
 the mock service. Both services log their requests, and the API forwards
 `X-Request-ID` to the payment service. This is log correlation, not tracing yet.
 
@@ -148,12 +153,18 @@ Elasticsearch → Kibana.
 The two applications now emit structured JSON logs to stdout. Request events
 include a UTC timestamp, service, request ID, route template, status, and duration.
 Business events describe order creation and simulated payment approval. Error
-events record failures. `trace_id` is currently null.
+events record failures. SQLAlchemy also emits query duration and failure events
+with the current request ID. `trace_id` is currently null.
+
+PostgreSQL writes connection, slow-statement, and error events to JSON files in
+its data volume. Statements taking at least 250 ms are logged. Validated request
+IDs are attached to application SQL as comments, connecting database logs with
+the API logs. See the Phase 3 lesson for log inspection commands.
 
 Elastic Agent will collect and
 prepare log events; Elasticsearch will index them for search; Kibana will provide
-the interface for investigating them. NGINX and database log formats will be
-configured and parsed explicitly during implementation.
+the interface for investigating them. Native PostgreSQL JSON and application JSON
+have different field names; collection and normalization arrive in Phase 6.
 
 ## 6. Metrics Pipeline
 
@@ -182,12 +193,12 @@ trace. The Collector receives and forwards spans; Jaeger lets us inspect them.
 A parent request waiting for a five-second database call must last at least as
 long as that call. If application work adds about 500 ms, the total is about
 5.5 seconds for sequential work, not 500 ms. The original brief's timing example
-will be interpreted this way when implementing the slow-query exercise.
+is now implemented with the database wait included in the request duration.
 
 ## 8. Installation
 
-Use Python 3.12 and Git. These commands are for Bash on Linux or WSL, run from the
-repository root:
+Use Python 3.12, Git, and a running Docker Engine with the Compose plugin. These
+commands are for Bash on Linux or WSL, run from the repository root:
 
 ```bash
 python3.12 -m venv .venv
@@ -205,13 +216,25 @@ The development requirements include the runtime packages, pytest, and Ruff.
 For only running the services, install `requirements.txt` instead. The `.in`
 files declare direct dependencies; the `.txt` files pin the resolved versions.
 
-Docker Engine with the Compose plugin will be required in Phase 5. Versions,
-machine requirements, and installation checks will be documented when the
-runtime stack is added and verified.
+For an existing environment from Phase 2, rerun the dependency installation or
+`uv pip sync` command to add SQLAlchemy and Psycopg. Verify Docker with
+`docker version` and `docker compose version`. PostgreSQL is pinned to
+`postgres:18.6-bookworm`; the Dockerized application stack is still Phase 5 work.
 
 ## 9. Running the System
 
-Start the mock payment service in one terminal:
+Start PostgreSQL and initialize its tables and sample products:
+
+```bash
+docker compose -f postgres/compose.yml up -d --wait
+.venv/bin/python -m app.database
+```
+
+Initialization is explicit and repeatable; it preserves existing products and
+orders. It creates missing tables, but does not migrate an existing table's
+structure. The default database settings match this local Compose configuration.
+
+Then start the mock payment service in one terminal:
 
 ```bash
 .venv/bin/python -m uvicorn payment.main:app --host 127.0.0.1 --port 8001 --no-access-log
@@ -226,15 +249,20 @@ Start the API in a second terminal, also from the repository root:
 Open [the API documentation](http://127.0.0.1:8000/docs) or try
 `curl -i http://127.0.0.1:8000/products`. Stop either server with Ctrl+C.
 
-Run one API worker: the temporary order store is local to that process. Restarting
-or reloading it discards orders. `.env.example` documents optional overrides;
-values must be exported in your shell because `.env` is not loaded automatically.
+Orders now survive API and database restarts. API instances share the database,
+while each request uses its own SQLAlchemy session. `.env.example` documents
+optional overrides; export them in your shell because the Python application
+does not load `.env` automatically.
+
+Stop PostgreSQL with `docker compose -f postgres/compose.yml stop`. To remove its
+container while keeping orders, use `docker compose -f postgres/compose.yml down`.
+The named data volume is retained. Adding `--volumes` would delete that data.
 
 `docker compose up` becomes available in Phase 5.
 
 ## 10. Testing Telemetry
 
-Run the Phase 2 checks:
+Run the checks with Docker available:
 
 ```bash
 .venv/bin/python -m pytest -q
@@ -243,22 +271,24 @@ Run the Phase 2 checks:
 ```
 
 Tests check order behavior, invalid inputs, JSON logs, concurrent request context,
-cross-service request IDs, and payment failure responses. They use isolated
-application instances and HTTP test transports; no running servers are needed.
+cross-service request IDs, payment failures, persistence, rollback, database
+constraints, and slow-query logs. The suite starts and removes its own PostgreSQL
+container and creates a fresh database per test. It does not use or erase the lab
+database. Python API servers need not be running.
 
 | Request | Current behavior |
 | --- | --- |
 | `GET /` | Service status and current storage mode |
-| `GET /products` | Three in-memory products with prices in USD cents |
+| `GET /products` | Seeded products read from PostgreSQL, priced in USD cents |
 | `POST /orders` | Validate items, calculate prices, store order; return 201 |
 | `GET /orders/{id}` | Retrieve an order, or return 404 if missing |
-| `GET /slow-query` | Planned for Phase 3; currently absent |
+| `GET /slow-query` | Real PostgreSQL delay; default 5 seconds, configurable from 0 to 5 |
 | `GET /error` | Intentional 500, error log, and request log |
 | `GET /payment` | HTTP simulation; 200 on success, 502/504 on dependency failures |
 | `GET /metrics` | Planned for Phase 7; currently absent |
 
-Follow the [Phase 2 walkthrough](docs/phase-02-fastapi.md#try-the-api) to generate
-requests and inspect the corresponding log events. Uvicorn's own startup messages
+Follow the [Phase 3 walkthrough](docs/phase-03-postgresql.md) to create persistent
+orders and inspect SQL and request logs. Uvicorn's own startup messages
 remain console text; application events are JSON, one per line.
 
 ## 11. Debugging Scenarios
@@ -267,26 +297,33 @@ Today, call `/error` and find its matching error and completion events by reques
 ID. Then stop the payment service and call `/payment`; the API should return 502
 and record the dependency failure. The Phase 2 lesson explains both exercises.
 
-The final exercise will be “checkout became slow.” We will introduce a controlled
+Try `GET /slow-query` with `X-Request-ID: phase3-slow`, then find that ID in the
+API's SQL event and PostgreSQL's slow-statement log. For a slow checkout, use
+`POST /orders?db_delay_seconds=5` with a normal order body. The default order path
+has no artificial delay. Both delay parameters reject values outside 0–5 seconds.
+
+The final exercise will be “checkout became slow.” We will use this controlled
 database delay, find the latency increase in Grafana, locate related events in
 Kibana, and inspect the database span in Jaeger. After removing the delay, we will
 repeat the request and confirm the improvement in all three signals.
 
-The exercise will connect slow-query behavior to the checkout path in a later
-phase, so its evidence describes the same request journey.
+Removing `db_delay_seconds` removes the injected wait; compare the SQL and request
+durations. This is an intentional delay exercise, not a query-index optimization.
 
 ## 12. Common Problems
 
 See [troubleshooting.md](docs/troubleshooting.md) for environment, import, payment,
-port, and in-memory persistence problems, along with the repository checks.
+port, database readiness, persistence, and log-location problems.
 
 ## 13. Production Improvements
 
 This repository will teach production concepts through a local lab. Future
 production discussions will cover authentication, TLS, secret management,
 telemetry retention, trace sampling, backups, availability, and alerting.
-Those capabilities have not been implemented. The current order store is a
-teaching step and will be replaced with PostgreSQL in Phase 3.
+Those capabilities have not been implemented. The current lab also uses a local
+database owner account and an explicit table-creation command. Production needs
+separate migration/runtime roles, managed secrets, schema migrations, and a
+backup/recovery plan; a persistent Docker volume alone is not a backup.
 
 ## 14. Kubernetes Migration Path
 
@@ -296,4 +333,4 @@ to volumes. Then we will discuss Helm packaging, the Prometheus Operator,
 Elastic's Kubernetes integration, and a production Jaeger deployment.
 
 Kubernetes is a later learning extension. The next implementation milestone is
-**Phase 3: PostgreSQL persistence and slow-query exercises**.
+**Phase 4: NGINX reverse proxy and request logging**.

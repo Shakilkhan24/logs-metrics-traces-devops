@@ -14,7 +14,7 @@ from payment.main import create_app as create_payment_app
 
 @pytest.fixture
 def client():
-    with TestClient(create_app(settings=Settings())) as client:
+    with TestClient(create_app(settings=Settings.from_env())) as client:
         yield client
 
 
@@ -65,12 +65,12 @@ def test_create_and_retrieve_order_with_server_calculated_prices(client):
         {"items": [{"product_id": 1, "quantity": 1}] * 21},
     ],
 )
-def test_invalid_orders_do_not_mutate_store(client, payload):
+def test_invalid_orders_do_not_mutate_store(client, payload, order_counts):
     assert client.post("/orders", json=payload).status_code == 422
-    assert not client.app.state.store.orders
+    assert order_counts() == (0, 0)
 
 
-def test_unknown_product_does_not_create_partial_order(client):
+def test_unknown_product_does_not_create_partial_order(client, order_counts):
     response = client.post(
         "/orders",
         json={
@@ -81,7 +81,7 @@ def test_unknown_product_does_not_create_partial_order(client):
         },
     )
     assert response.status_code == 404
-    assert not client.app.state.store.orders
+    assert order_counts() == (0, 0)
 
 
 def test_order_not_found_and_invalid_id_are_distinct(client):
@@ -89,19 +89,19 @@ def test_order_not_found_and_invalid_id_are_distinct(client):
     assert client.get("/orders/not-a-uuid").status_code == 422
 
 
-def test_order_store_resets_when_application_restarts():
-    application = create_app(settings=Settings())
+def test_order_survives_application_restart():
+    application = create_app(settings=Settings.from_env())
     with TestClient(application) as client:
         response = client.post(
             "/orders", json={"items": [{"product_id": 1, "quantity": 1}]}
         )
         location = response.headers["location"]
     with TestClient(application) as client:
-        assert client.get(location).status_code == 404
+        assert client.get(location).json() == response.json()
 
 
 def test_application_logging_correlates_business_and_request_events(capsys):
-    with TestClient(create_app(settings=Settings())) as client:
+    with TestClient(create_app(settings=Settings.from_env())) as client:
         capsys.readouterr()
         response = client.post(
             "/orders?token=do-not-log-this",
@@ -131,7 +131,7 @@ def test_application_logging_correlates_business_and_request_events(capsys):
 
 
 def test_intentional_exception_has_safe_response_and_correlated_error_logs(capsys):
-    with TestClient(create_app(settings=Settings())) as client:
+    with TestClient(create_app(settings=Settings.from_env())) as client:
         capsys.readouterr()
         response = client.get("/error", headers={"X-Request-ID": "failure-demo"})
         assert response.status_code == 500
@@ -165,7 +165,8 @@ def test_mock_payment_call_and_request_id_cross_service_boundary(capsys):
     payment_app = create_payment_app()
     with TestClient(payment_app):
         api = create_app(
-            settings=Settings(), payment_transport=httpx.ASGITransport(app=payment_app)
+            settings=Settings.from_env(),
+            payment_transport=httpx.ASGITransport(app=payment_app),
         )
         with TestClient(api) as client:
             capsys.readouterr()
@@ -206,7 +207,7 @@ def test_payment_dependency_failures_have_explicit_status_codes(
         return httpx.Response(200, json={"status": "approved"})
 
     api = create_app(
-        settings=Settings(), payment_transport=httpx.MockTransport(downstream)
+        settings=Settings.from_env(), payment_transport=httpx.MockTransport(downstream)
     )
     with TestClient(api) as client:
         capsys.readouterr()
@@ -236,7 +237,8 @@ def test_concurrent_requests_keep_separate_context(capsys):
             return approved_response()
 
         api = create_app(
-            settings=Settings(), payment_transport=httpx.MockTransport(downstream)
+            settings=Settings.from_env(),
+            payment_transport=httpx.MockTransport(downstream),
         )
         async with api.router.lifespan_context(api):
             async with httpx.AsyncClient(
@@ -267,7 +269,7 @@ def test_concurrent_requests_keep_separate_context(capsys):
 
 
 def test_validation_and_not_found_requests_are_logged(capsys):
-    with TestClient(create_app(settings=Settings())) as client:
+    with TestClient(create_app(settings=Settings.from_env())) as client:
         capsys.readouterr()
         assert (
             client.post(

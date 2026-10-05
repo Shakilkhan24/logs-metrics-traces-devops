@@ -135,3 +135,80 @@ verify your understanding.
 Phase 3 will add PostgreSQL persistence, SQLAlchemy, SQL logging, and controlled
 slow database queries. `/slow-query` and `/metrics` are not implemented yet;
 logs have request IDs but no OpenTelemetry trace IDs.
+
+## 2026-10-05 — Phase 3: PostgreSQL and SQL observability
+
+Commit subject: `feat: integrate PostgreSQL database`.
+
+### What changed
+
+- Replaced the in-memory store with SQLAlchemy 2.0.54 and Psycopg 3.3.6 connected
+  to PostgreSQL 18.6.
+- Added products, orders, and order-item tables with keys and check constraints.
+  Item names and prices are stored as purchase-time snapshots.
+- Added request-local transactions, connection pooling, startup readiness checks,
+  shutdown cleanup, and generic 503 responses for failed database operations.
+- Added explicit, repeatable table initialization and catalogue seeding.
+- Added a database-only Compose file with persistent storage and native JSON
+  connection, slow-statement, and error logging.
+- Added SQL duration/failure events and validated request IDs in SQL comments.
+- Added `/slow-query` and an optional `db_delay_seconds` checkout parameter using
+  real PostgreSQL waits, bounded to 0–5 seconds.
+- Updated tests to use private PostgreSQL databases and added the Phase 3 lesson.
+
+### Why it changed
+
+Process memory cannot preserve orders across restarts or share them between API
+instances. PostgreSQL provides persistent shared state, while a transaction keeps
+an order and all its items atomic. Real database waits and database-generated logs
+give the observability exercises evidence from an actual dependency.
+
+### DevOps concepts introduced
+
+Relational models, foreign keys, database constraints, connection pools, sessions,
+flush versus commit, rollback, persistent volumes, explicit initialization, SQL
+timeouts, native database logs, and recovery after dependency failure.
+
+### Production equivalent
+
+Services store durable business state in a database, bound their connection usage,
+and use transactions to prevent partial writes. Production also needs reviewed
+schema migrations, distinct runtime/migration privileges, managed credentials,
+backups, and retention policies. The local owner account and create-missing-tables
+command are teaching tools; those production controls remain future work.
+
+### Verification
+
+- All 39 pytest cases passed against a temporary real PostgreSQL container.
+- Verified atomic rollback after a database-rejected item insert, independent
+  concurrent transactions, price snapshots, repeated initialization, and shared
+  orders across API instances and restarts.
+- Verified real SQL delay timing, bound enforcement, statement-timeout rollback,
+  and request-ID correlation with PostgreSQL's native slow-statement logs.
+- Live HTTP checks confirmed an order survived API and PostgreSQL restarts;
+  database outage produced 503 and recovery restored access to that same order.
+- Live checks exercised the default five-second query, delayed checkout, payment,
+  intentional application failure, API docs, and OpenAPI.
+- Parsed 43 live application JSON events and checked matching PostgreSQL slow
+  logs plus a database-only division-by-zero event with SQLSTATE `22012`.
+- Ruff lint/format, dependency compatibility, Compose configuration, documentation
+  links, and whitespace checks passed. The original specification is unchanged.
+
+### Runtime state after verification
+
+The lab PostgreSQL container is healthy on localhost:5432, with the named data
+volume retained. One verification order remains:
+`0a31f891-3f26-4c16-8f78-02e55ecac438`. Temporary API/payment processes and the private
+test container were stopped or removed after verification.
+
+### Learner checkpoint
+
+Follow [Phase 3](phase-03-postgresql.md): retrieve an order after restarting the
+API, locate a slow SQL statement by request ID, and compare checkout duration
+before and after removing the injected delay.
+
+### Next phase
+
+Phase 4 will introduce NGINX as the reverse proxy and add its access and error
+logs. Full application containerization, centralized collection, metrics, and
+distributed tracing remain in their later phases.

@@ -27,6 +27,10 @@ EVENT_FIELDS = (
     "payment_id",
     "error_type",
     "upstream_status",
+    "db_operation",
+    "query_name",
+    "db_backend_pid",
+    "sqlstate",
 )
 
 

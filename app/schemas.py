@@ -1,4 +1,4 @@
-"""HTTP contracts. SQLAlchemy persistence models arrive in Phase 3."""
+"""HTTP contracts, kept separate from SQLAlchemy persistence models."""
 
 from datetime import datetime
 from typing import Annotated, Literal
@@ -10,6 +10,8 @@ PositiveInteger = Annotated[int, Field(strict=True, gt=0)]
 
 
 class Product(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: PositiveInteger
     name: str
     price_cents: PositiveInteger
@@ -30,6 +32,8 @@ class OrderCreate(BaseModel):
 
 
 class OrderItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     product_id: int
     name: str
     quantity: int
@@ -38,6 +42,8 @@ class OrderItem(BaseModel):
 
 
 class Order(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     items: list[OrderItem]
     total_cents: int

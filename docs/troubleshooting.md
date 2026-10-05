@@ -1,7 +1,7 @@
 # Troubleshooting
 
-This guide covers repository setup and the Phase 2 Python services. Database,
-container, and telemetry pipeline checks will follow their implementation phases.
+This guide covers repository setup, the Python services, and Phase 3 PostgreSQL.
+The full container stack and telemetry pipeline checks follow in later phases.
 
 ## Creating the virtual environment fails
 
@@ -37,9 +37,49 @@ For another address, export `PAYMENT_BASE_URL` in the API's shell before startup
 
 ## An order disappeared
 
-Phase 2 stores orders in process memory. Restarting, using reload, or starting a
-different API process gives a fresh store. Use one worker during this phase.
-Durable, shared persistence arrives with PostgreSQL in Phase 3.
+In Phase 3, restarting the API should preserve orders. Check whether `DATABASE_URL`
+points to the same database and whether the named data volume still exists.
+`docker compose down` retains it; `down --volumes` deletes it. Orders created under
+the old Phase 2 in-memory version cannot be recovered after that process exits.
+
+## The API reports that the database is not ready
+
+Run `docker compose -f postgres/compose.yml ps`, then start the database with
+`docker compose -f postgres/compose.yml up -d --wait`. Run
+`.venv/bin/python -m app.database` before starting the API to create missing tables
+and seed products. Verify that your exported `DATABASE_URL` matches the database.
+
+If 5432 is occupied, export `POSTGRES_PORT=5433` before starting this Compose
+project and use port 5433 in `DATABASE_URL` too. The application uses the
+`postgresql+psycopg://` URL scheme. Invalid configuration fails validation.
+
+Changing the Compose password does not change a role in an existing data volume:
+the official image's initialization variables apply when the data directory is
+empty. Keep the settings consistent or deliberately manage the database role.
+
+## Database requests return 503
+
+Find `database.query_failed` and `database.unavailable` events using the response's
+request ID. Inspect the database's JSON logs for SQLSTATE and error details.
+Connection failures and failed database operations return a generic 503; an
+unknown product still returns 404. A failed transaction is rolled back before
+its session closes. After the database recovers, the pool checks connections
+before reuse.
+
+## Docker logs do not show the slow SQL statement
+
+PostgreSQL's logging collector writes runtime events into `$PGDATA/log/` inside
+the persistent volume. Use the native JSON inspection command in the
+[Phase 3 lesson](phase-03-postgresql.md#inspect-native-postgresql-logs).
+`docker compose logs` mainly shows startup messages once the collector is active.
+Statements shorter than 250 ms are not included in the native slow-statement log.
+
+## Tests require Docker or cannot start PostgreSQL
+
+The suite now uses real PostgreSQL. Check `docker version` and network access for
+the first image pull. Tests start a uniquely named temporary container and drop
+only their own generated databases; they do not connect to the ordinary lab
+database. An unavailable test database is a test failure, not a skipped check.
 
 ## Application events are JSON, but some console messages are plain text
 
@@ -89,7 +129,8 @@ Use `git ls-files` to inspect the files Git is already tracking.
 ## Docker Compose reports that no configuration file exists
 
 This is expected before Phase 5, when `docker-compose.yml` is introduced.
-Use the local Python startup commands for Phase 2. Check the phase table in the
+For Phase 3, specify `-f postgres/compose.yml` for the database and use the local
+Python commands for the application. Check the phase table in the
 [README](../README.md#1-project-motivation) before following later-phase commands.
 
 ## Git shows unexpected line-ending changes

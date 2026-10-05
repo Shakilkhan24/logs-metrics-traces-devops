@@ -114,5 +114,8 @@ The [Phase 2 lesson](phase-02-fastapi.md) covers routes, schemas, status codes,
 process memory, JSON logs, concurrent request context, and HTTP dependency errors.
 It includes commands and expected results for running the two services locally.
 
-PostgreSQL persistence is introduced in Phase 3 so the application and database
-concepts can be explained and verified separately.
+## Phase 3: PostgreSQL and transactions
+
+The [Phase 3 lesson](phase-03-postgresql.md) explains persistent storage, SQLAlchemy
+models, connection pools, sessions, transactions, slow queries, and native database
+logs. It replaces the in-memory implementation while preserving the HTTP contract.

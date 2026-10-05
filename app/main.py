@@ -2,20 +2,24 @@
 
 import logging
 from contextlib import asynccontextmanager
+from typing import Annotated
 from uuid import UUID
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import Settings
+from app.database import Database
 from app.logging import (
     RequestLoggingMiddleware,
     configure_logging,
     request_id_context,
 )
 from app.schemas import Order, OrderCreate, PaymentResult, Product
-from app.store import MemoryStore, UnknownProductError
+from app.store import PostgresStore, UnknownProductError
 
 logger = logging.getLogger("shopsphere.order-api")
 
@@ -30,40 +34,70 @@ def create_app(
     @asynccontextmanager
     async def lifespan(application: FastAPI):
         configure_logging("order-api")
-        application.state.store = MemoryStore()
-        async with httpx.AsyncClient(
-            base_url=str(config.payment_base_url),
-            timeout=config.payment_timeout_seconds,
-            transport=payment_transport,
-            trust_env=False,
-        ) as payment_client:
-            application.state.payment_client = payment_client
-            logger.info("Order API started", extra={"event": "service.started"})
+        database = Database(config)
+        try:
             try:
-                yield
-            finally:
-                logger.info("Order API stopped", extra={"event": "service.stopped"})
+                database.check_ready()
+            except SQLAlchemyError:
+                raise RuntimeError(
+                    "Database is not ready. Check DATABASE_URL and run "
+                    "python -m app.database."
+                ) from None
+            application.state.database = database
+            application.state.store = PostgresStore(database.sessions)
+            async with httpx.AsyncClient(
+                base_url=str(config.payment_base_url),
+                timeout=config.payment_timeout_seconds,
+                transport=payment_transport,
+                trust_env=False,
+            ) as payment_client:
+                application.state.payment_client = payment_client
+                logger.info("Order API started", extra={"event": "service.started"})
+                try:
+                    yield
+                finally:
+                    logger.info("Order API stopped", extra={"event": "service.stopped"})
+        finally:
+            database.close()
 
     application = FastAPI(
         title="ShopSphere Order API",
-        version="0.2.0",
-        description="Phase 2: in-memory orders, JSON logs, and a mock HTTP dependency.",
+        version="0.3.0",
+        description="Phase 3: PostgreSQL persistence, SQL logs, and database delays.",
         lifespan=lifespan,
     )
     application.add_middleware(RequestLoggingMiddleware, service="order-api")
 
+    @application.exception_handler(SQLAlchemyError)
+    async def database_error(request: Request, exc: SQLAlchemyError):
+        logger.error(
+            "Database operation failed",
+            extra={"event": "database.unavailable", "error_type": type(exc).__name__},
+        )
+        return JSONResponse(status_code=503, content={"detail": "Database unavailable"})
+
     @application.get("/")
     async def root() -> dict[str, str | int]:
-        return {"service": "order-api", "status": "ok", "phase": 2, "storage": "memory"}
+        return {
+            "service": "order-api",
+            "status": "ok",
+            "phase": 3,
+            "storage": "postgresql",
+        }
 
     @application.get("/products", response_model=list[Product])
-    async def products(request: Request):
-        return list(request.app.state.store.products.values())
+    def products(request: Request):
+        return request.app.state.store.list_products()
 
     @application.post("/orders", response_model=Order, status_code=201)
-    async def create_order(payload: OrderCreate, request: Request, response: Response):
+    def create_order(
+        payload: OrderCreate,
+        request: Request,
+        response: Response,
+        db_delay_seconds: Annotated[float, Query(ge=0, le=5, allow_inf_nan=False)] = 0,
+    ):
         try:
-            order = request.app.state.store.create_order(payload)
+            order = request.app.state.store.create_order(payload, db_delay_seconds)
         except UnknownProductError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         response.headers["Location"] = f"/orders/{order.id}"
@@ -79,11 +113,23 @@ def create_app(
         return order
 
     @application.get("/orders/{id}", response_model=Order)
-    async def get_order(id: UUID, request: Request):
-        order = request.app.state.store.orders.get(id)
+    def get_order(id: UUID, request: Request):
+        order = request.app.state.store.get_order(id)
         if order is None:
             raise HTTPException(status_code=404, detail="Order not found")
         return order
+
+    @application.get("/slow-query")
+    def slow_query(
+        request: Request,
+        seconds: Annotated[float, Query(ge=0, le=5, allow_inf_nan=False)] = 5,
+    ) -> dict[str, str | float]:
+        duration = request.app.state.store.slow_query(seconds)
+        return {
+            "operation": "pg_sleep",
+            "requested_seconds": seconds,
+            "duration_ms": duration,
+        }
 
     @application.get("/payment", response_model=PaymentResult)
     async def payment(request: Request):
