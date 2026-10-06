@@ -62,8 +62,8 @@ def create_app(
 
     application = FastAPI(
         title="ShopSphere Order API",
-        version="0.5.0",
-        description="Phase 5: containerized services with Docker Compose.",
+        version="0.6.0",
+        description="Phase 6: centralized logs with Elastic Agent and Kibana.",
         lifespan=lifespan,
     )
     application.add_middleware(RequestLoggingMiddleware, service="order-api")
@@ -81,7 +81,7 @@ def create_app(
         return {
             "service": "order-api",
             "status": "ok",
-            "phase": 5,
+            "phase": 6,
             "storage": "postgresql",
         }
 

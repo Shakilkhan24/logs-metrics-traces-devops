@@ -1,16 +1,18 @@
 # Architecture
 
-Status: Phase 5 runs NGINX, the order API, PostgreSQL, and mock payment through
-Docker Compose. Telemetry backends remain planned.
+Status: Phase 6 runs the application and centralized logging through Compose.
+Elastic Agent collects logs, Elasticsearch indexes them, and Kibana searches them.
+Metrics and tracing backends remain planned.
 The [main README](../README.md#3-architecture-diagram) contains the target diagram.
 
 Current path: client → NGINX → FastAPI → SQLAlchemy/Psycopg → PostgreSQL. A separate
 `GET /payment` path calls the mock payment service over HTTP. Order creation does
 not trigger payment.
 
-The root `docker-compose.yml` defines project `shopsphere`, a bridge network,
-four long-running services, and the one-time `db-init` service. Only NGINX is
-published to the host, at `127.0.0.1:8088`. It forwards to `api:8000`; the API uses
+The root `docker-compose.yml` defines project `shopsphere`, application and
+telemetry bridge networks, seven long-running services, and two initialization
+jobs. NGINX publishes `127.0.0.1:8088`; Elasticsearch and Kibana publish loopback
+ports 9200 and 5601. NGINX forwards to `api:8000`; the API uses
 `postgres:5432` and `payment:8001`. Service names resolve through Docker DNS.
 NGINX re-resolves its upstream so an API address change needs no proxy restart.
 
@@ -97,14 +99,26 @@ gives the required mock payment service its own source location.
 The request path is client → NGINX → FastAPI → database and/or payment service.
 The API's business logic determines which downstream operations are needed.
 
-Logs currently live at their sources: NGINX access JSON on stdout and error text
+Logs originate at their sources: NGINX access JSON on stdout and error text
 on stderr, application JSON on stdout, and PostgreSQL JSON in its volume.
 Compose sets Docker log rotation to 10 MB and three files per container. This
-does not collect logs centrally or retain them after container removal. Native
+does not retain source logs after container removal. Native
 Phase 4 NGINX runs still write to ignored `nginx/runtime/`.
 NGINX timings are seconds; application and SQL event durations are milliseconds.
-Phase 6 will collect and normalize these events through Elastic Agent and
-Elasticsearch, with Kibana for exploration.
+Phase 6 collects and normalizes these events through Elastic Agent and
+Elasticsearch, with Kibana for exploration. The Agent reads Docker files through
+a read-only external bind volume, filters Compose project/service labels, and separately
+reads PostgreSQL's log-directory volume subpath. It has no Docker socket.
+The mounted Docker directory remains readable by the Agent even for projects
+excluded from publication; this is not a multi-tenant isolation mechanism.
+
+The setup job installs lab-owned ingest and index assets and a Kibana data view.
+Agent starts after setup succeeds. App readiness is independent of telemetry.
+One replica-free Elasticsearch node stores two data streams, with daily/1 GiB
+rollover and deletion seven days after rollover. PostgreSQL source logs rotate
+but need separate archival/cleanup for extended use. Agent's registry and
+Elasticsearch data live in separate persistent volumes. Source rotation can lose
+unread events during a long output outage; failed batches may be replayed.
 
 Metrics flow from the application and exporters to Prometheus in response to
 scrapes initiated by Prometheus. Grafana queries Prometheus. Exporters measure
@@ -144,7 +158,7 @@ Python dependencies are pinned. The container bases pin Python 3.12.15, NGINX
 1.30.5, and PostgreSQL 18.6 by version and digest. `SHOPSPHERE_PORT` changes the
 proxy's host port; `PAYMENT_TIMEOUT_SECONDS` changes the HTTP client timeout.
 Compose injects service-name connection URLs; native defaults still use localhost.
-Other infrastructure
-versions, telemetry storage, retention, and capacity settings will be chosen as
-those services are added. Database logs currently share the persistent data volume;
-their collection and retention policy will be revisited in Phase 6.
+Elastic components pin matching 9.5.4 images. The lab disables Elastic security
+and binds host ports to loopback; production requires authentication and TLS.
+Future metrics/tracing storage and capacity settings will be chosen when those
+services are added.

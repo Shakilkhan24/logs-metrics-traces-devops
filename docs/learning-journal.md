@@ -396,3 +396,127 @@ restarting a container, and deleting a volume have different effects.
 Phase 6 will collect application, NGINX, and PostgreSQL logs with Elastic Agent,
 store them in Elasticsearch, and make them searchable in Kibana. Metrics and
 distributed tracing remain in Phases 7 and 8.
+
+## 2026-10-05–06 — Phase 6: Centralized logging
+
+Commit subject: `feat: implement centralized logging with ELK`.
+
+### What changed
+
+- Added digest-pinned Elasticsearch, Kibana, and standalone Elastic Agent 9.5.4,
+  a separate telemetry network, health checks, memory limits, and persistent
+  Elasticsearch/Agent volumes. The application images now use version 0.6.0.
+- Added Docker log labels and a collector filter for the current project and
+  allowed services. PostgreSQL is read through a read-only log-directory subpath;
+  the collector has no Docker socket or access to database data files.
+- Added a helper creating an external Docker log-source volume. Desktop/WSL uses
+  the Windows Docker CLI to avoid rewriting its device path to the user distro.
+  Native Linux uses its normal CLI; Agent mounts the resulting volume read-only.
+- Added idempotent setup for parsing, explicit field mappings, two data streams,
+  index lifecycle rules, and the **ShopSphere logs** Kibana data view. Setup
+  retries temporary initialization HTTP errors without erasing data.
+- Normalized service identity, timestamp, severity, HTTP fields, request IDs,
+  business/query metadata, and durations in nanoseconds. Preserved raw events and
+  made parser failures searchable instead of silently discarding them.
+- Added an isolated logging smoke test and kept the earlier Compose lifecycle
+  test limited to application services. Updated the README, component guides,
+  architecture, troubleshooting, and the Phase 6 lesson.
+
+### Why it changed
+
+Finding one failure previously required reading several independent log sources.
+Centralized collection and a consistent schema now let one request-ID search
+connect proxy, application, payment, and database evidence. Separate collection
+keeps Elasticsearch availability out of the shopping request path.
+
+### DevOps concepts introduced
+
+File harvesting, Docker log envelopes, source identity and fingerprints,
+acknowledged offsets, standalone agents, ingest pipelines, structured parsing,
+mapping types, event time, duration units, data streams and backing indices,
+rollover/deletion policies, Kibana data views and KQL, delivery retries, and
+verification of an entire telemetry path rather than only process health.
+
+### Problems found during implementation
+
+The initial 64-byte Docker fingerprint could match identical startup text in
+different files. Docker now uses 1024 bytes, including unique timestamps/labels;
+PostgreSQL retains a 64-byte fingerprint beginning with its timestamp.
+
+The WSL user distro had an old `/var/lib/docker/containers` directory unrelated
+to the active Docker Desktop daemon. Agent could read it and appear healthy while
+publishing no ShopSphere container events. The volume helper fixes the source, and
+the smoke test checks that the running API's actual log file is visible.
+
+An initial Elasticsearch setup request returned HTTP 429 while cluster startup
+work was pending. Bounded retries now cover those temporary responses. WSL clock
+corrections also appeared in Elasticsearch logs; persistent data was retained.
+
+One disposable node-replacement check received `:0` instead of an assigned port
+from Docker Desktop. The test now retains its originally allocated Elasticsearch
+port when replacing that container, keeping the recovery query deterministic.
+
+After a Docker Desktop/WSL restart between sessions, an existing PostgreSQL file
+bind pointed at a stale Desktop mount. Recreating the affected containers restored
+their configuration while keeping the original data volumes. A shared WSL log
+mount also proved unreliable across that restart. The final implementation uses
+an external Docker bind volume created directly through the Windows CLI; its
+device points at the daemon's real log directory and needs no shared host mount.
+
+### Verification
+
+- All 50 existing pytest cases passed. Image builds, Ruff lint/format, Bash
+  syntax, Compose validation, documentation links, and whitespace checks passed.
+- The application Compose smoke suite passed initialization failure, readiness,
+  dependency outages, API replacement at a different IP, and order persistence.
+- Real Elasticsearch pipeline simulations verified app, NGINX, PostgreSQL,
+  console text, native errors, malformed JSON retention, and duration conversion.
+- The logging suite verified searchable mappings, lifecycle installation,
+  idempotent setup, and the Kibana data view through their HTTP APIs.
+- End-to-end searches found order business events, application stack traces,
+  payment events across three services, and slow SQL across proxy/API/database.
+- Native PostgreSQL division-by-zero errors retained SQLSTATE and request ID;
+  native NGINX errors matched access events by connection without inventing IDs.
+- Agent replacement retained acknowledged offsets without replay in the check.
+  Application requests succeeded during an Elasticsearch outage; their logs
+  arrived after recovery. Existing indexed records survived node replacement.
+- Unrelated-project records were excluded, and normal generated records had no
+  unexpected parsing failures. Disposable projects and their volumes were removed.
+- The original specification and all 14 README sections remain intact.
+
+### Runtime left after verification
+
+The main `shopsphere` stack has seven healthy services; `db-init` and
+`elastic-setup` both exited successfully. The application is available at
+`http://127.0.0.1:8088`, Elasticsearch at `http://127.0.0.1:9200`, and Kibana
+Discover at `http://127.0.0.1:5601/app/discover`. Fresh payment, slow-query, and
+error requests were searchable with the expected service identities and no
+parsing failures. Previously indexed verification records also survived.
+
+The root verification order `ab88ce70-07a0-4092-ba7a-65d20daf60b2` and both earlier
+Phase 3 verification orders remain available in their separate databases. The
+final logging smoke suite passed using the external Docker log volume, and the
+application smoke suite passed with a deliberately unavailable log-source volume
+name, confirming its independent startup. Both disposable projects were removed.
+The user's untracked `cmd.sh` was left untouched.
+
+### Production equivalent and limits
+
+Agents commonly run on workload hosts or as Kubernetes DaemonSets, with centrally
+managed policies. Production needs TLS, authentication, narrow ingest privileges,
+protected log access, adequate queues/storage, replicas, backups, and ingestion
+monitoring. This lab exposes Elastic HTTP only on loopback and disables security.
+The Agent can read other Docker logs/metadata through its mount while its publishing
+filter excludes them; this is not a tenant security boundary.
+
+The registry prevents routine replay but cannot promise exactly-once delivery.
+Unacknowledged batches can duplicate, and unread files can disappear during long
+outages. Elasticsearch deletes indices seven days after rollover; PostgreSQL's
+rotated source files need separate archival/cleanup for extended use.
+
+### Learner checkpoint and next phase
+
+Follow [Phase 6](phase-06-centralized-logging.md). Find one payment and one slow
+query across services in Discover. Explain the differences between source files,
+the Agent registry, indexed documents, and a data view. Phase 7 will add
+Prometheus metrics, exporters, and Grafana. Tracing remains Phase 8.

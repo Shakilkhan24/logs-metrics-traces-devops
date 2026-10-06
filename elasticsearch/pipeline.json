@@ -1,0 +1,48 @@
+{
+  "description": "ShopSphere application JSON, NGINX access/error, and PostgreSQL JSON",
+  "version": 1,
+  "processors": [
+    {"set": {"field": "event.original", "copy_from": "message"}},
+    {"json": {
+      "if": "ctx.message != null && (ctx.message.startsWith('{') || ctx.service?.name == 'postgresql')",
+      "field": "message", "target_field": "_parsed"
+    }},
+    {"script": {"lang": "painless", "source": "@normalize.painless"}},
+    {"grok": {
+      "if": "ctx.event?.action == 'proxy.error'",
+      "field": "message",
+      "patterns": ["%{NGTIME:_time} \\[%{LOGLEVEL:log.level}\\] %{POSINT:process.pid:long}#%{NUMBER}: (?:\\*%{POSINT:nginx.connection} )?%{GREEDYDATA:message}"],
+      "pattern_definitions": {"NGTIME": "[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}"}
+    }},
+    {"grok": {
+      "if": "ctx.service?.name == 'postgresql'",
+      "field": "_sql",
+      "patterns": ["request_id=%{REQUESTID:request_id} \\*/"],
+      "pattern_definitions": {"REQUESTID": "[A-Za-z0-9_-]{1,64}"},
+      "ignore_failure": true
+    }},
+    {"grok": {
+      "if": "ctx.service?.name == 'postgresql' && ctx.message.startsWith('duration:')",
+      "field": "message",
+      "patterns": ["^duration: %{NUMBER:postgresql.duration_ms:double} ms" ]
+    }},
+    {"script": {
+      "if": "ctx.postgresql?.duration_ms != null",
+      "source": "ctx.event.duration = (long)(ctx.postgresql.duration_ms * 1000000); ctx.event.action = 'database.slow_statement';"
+    }},
+    {"date": {
+      "if": "ctx.containsKey('_time')",
+      "field": "_time",
+      "formats": ["ISO8601", "yyyy-MM-dd HH:mm:ss.SSS z", "yyyy/MM/dd HH:mm:ss"],
+      "timezone": "UTC"
+    }},
+    {"lowercase": {"field": "log.level", "ignore_missing": true}},
+    {"remove": {"field": ["_time", "_sql"], "ignore_missing": true}}
+  ],
+  "on_failure": [
+    {"set": {"field": "event.kind", "value": "pipeline_error"}},
+    {"append": {"field": "tags", "value": "parse_error"}},
+    {"set": {"field": "error.message", "value": "{{ _ingest.on_failure_message }}"}},
+    {"remove": {"field": ["_parsed", "_time", "_sql"], "ignore_missing": true}}
+  ]
+}

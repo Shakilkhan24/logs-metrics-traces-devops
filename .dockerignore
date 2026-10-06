@@ -1,4 +1,4 @@
-# Allow only the source and configuration needed by the two image builds.
+# Allow only the source and configuration needed by the image builds.
 **
 !requirements.txt
 !app/
@@ -13,3 +13,7 @@
 !nginx/container.conf
 !nginx/includes/
 !nginx/includes/*.conf
+!elastic/
+!elastic/Dockerfile
+!elastic/elastic-agent.yml
+!elastic/docker-source.js

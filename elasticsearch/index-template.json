@@ -1,0 +1,70 @@
+{
+  "index_patterns": ["logs-shopsphere.*-lab"],
+  "priority": 501,
+  "data_stream": {},
+  "template": {
+    "settings": {
+      "index.number_of_shards": 1,
+      "index.number_of_replicas": 0,
+      "index.default_pipeline": "shopsphere-normalize-v1",
+      "index.lifecycle.name": "shopsphere-logs"
+    },
+    "mappings": {
+      "dynamic": false,
+      "properties": {
+        "@timestamp": {"type": "date"},
+        "message": {"type": "match_only_text"},
+        "request_id": {"type": "keyword"},
+        "tags": {"type": "keyword"},
+        "service": {"properties": {"name": {"type": "keyword"}}},
+        "trace": {"properties": {"id": {"type": "keyword"}}},
+        "event": {"properties": {
+          "action": {"type": "keyword"},
+          "kind": {"type": "keyword"},
+          "dataset": {"type": "keyword"},
+          "duration": {"type": "long"},
+          "original": {"type": "keyword", "index": false, "doc_values": false}
+        }},
+        "data_stream": {"properties": {
+          "type": {"type": "constant_keyword"},
+          "dataset": {"type": "constant_keyword"},
+          "namespace": {"type": "constant_keyword"}
+        }},
+        "log": {"properties": {
+          "level": {"type": "keyword"}, "iostream": {"type": "keyword"},
+          "file": {"properties": {"path": {"type": "keyword"}}}
+        }},
+        "container": {"properties": {"id": {"type": "keyword"}}},
+        "process": {"properties": {"pid": {"type": "long"}}},
+        "labels": {"properties": {
+          "compose_project": {"type": "keyword"}, "compose_service": {"type": "keyword"}
+        }},
+        "http": {"properties": {
+          "request": {"properties": {"method": {"type": "keyword"}}},
+          "response": {"properties": {"status_code": {"type": "integer"}}}
+        }},
+        "url": {"properties": {"path": {"type": "keyword"}}},
+        "error": {"properties": {
+          "type": {"type": "keyword"}, "message": {"type": "match_only_text"},
+          "stack_trace": {"type": "text", "index": false}
+        }},
+        "shopsphere": {"properties": {
+          "source": {"type": "keyword"}, "order_id": {"type": "keyword"},
+          "payment_id": {"type": "keyword"}, "query_name": {"type": "keyword"},
+          "db_operation": {"type": "keyword"}, "db_backend_pid": {"type": "long"},
+          "sqlstate": {"type": "keyword"}, "item_count": {"type": "integer"},
+          "total_cents": {"type": "long"}, "upstream_status": {"type": "integer"}
+        }},
+        "nginx": {"properties": {
+          "connection": {"type": "keyword"}, "upstream_status": {"type": "keyword"}
+        }},
+        "postgresql": {"properties": {
+          "dbname": {"type": "keyword"}, "user": {"type": "keyword"},
+          "statement": {"type": "match_only_text"}, "state_code": {"type": "keyword"},
+          "backend_type": {"type": "keyword"}, "duration_ms": {"type": "double"}
+        }}
+      }
+    }
+  },
+  "_meta": {"description": "Explicit search fields prevent accidental mapping growth; other source fields remain in _source."}
+}

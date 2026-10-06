@@ -50,4 +50,5 @@ its own configuration and PID file. `start` and `reload` validate first;
 See the [Phase 4 lesson](../docs/phase-04-nginx.md) for log fields, request IDs,
 failure exercises, and the request lifecycle. The
 [Phase 5 lesson](../docs/phase-05-docker-compose.md) explains containers and DNS.
-Phase 6 will collect logs; Phase 7 will add exporter measurements.
+The [Phase 6 lesson](../docs/phase-06-centralized-logging.md) searches the proxy's
+access and error events centrally. Phase 7 will add exporter measurements.

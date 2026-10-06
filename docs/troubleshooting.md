@@ -1,5 +1,80 @@
 # Troubleshooting
 
+## Kibana is empty although Agent is healthy
+
+Choose **ShopSphere logs** in Discover, set **Last 15 minutes**, generate a new
+request ID, and allow a few seconds for collection/index refresh. Check each hop:
+
+```bash
+curl -H 'X-Request-ID: logging-check' http://127.0.0.1:8088/payment
+docker compose ps --all
+docker compose logs --tail 40 elastic-setup elastic-agent
+curl -s http://127.0.0.1:9200/_data_stream/logs-shopsphere.*-lab
+```
+
+`elastic-setup` must exit 0. Rerun failed setup after dependencies recover with
+`docker compose up -d --wait --wait-timeout 360`. Setup retries HTTP 429/502–504
+responses during initialization. `tags: "parse_error"` in Discover identifies
+records the ingest pipeline could not normalize; expand `error.message` and
+`event.original`.
+
+On Docker Desktop/WSL, a healthy reader can point at the wrong distro's old
+`/var/lib/docker/containers`. Prepare the actual source and recreate Agent:
+
+```bash
+bash elastic/prepare-docker-logs.sh
+docker compose up -d --no-deps --force-recreate --wait elastic-agent
+```
+
+The helper creates/reuses the external `shopsphere_docker_logs` volume against
+the actual daemon's container directory; its definition survives restarts. On
+WSL it uses Docker Desktop's Windows CLI, verifying both clients target the same
+daemon. Do not fix log access by broadening permissions or mounting the socket.
+Collection is limited to the current Compose project; old native phase exercises
+will not appear. Files must grow to their configured fingerprint length before
+being read (1024 bytes for Docker, 64 for PostgreSQL).
+
+## Elastic startup is slow or fails with an out-of-memory exit
+
+The initial images are large and Kibana needs time to initialize saved objects.
+Use `--wait-timeout 360`, inspect `docker stats --no-stream`, and allocate roughly
+6 GiB or more for the combined lab. The standalone logging smoke test launches a
+second Elastic stack; temporarily stop the regular Agent, Kibana, and Elasticsearch
+to free memory, then restore them after the test. Their volumes remain intact.
+The Agent limit is 1 GiB, Kibana 1.5 GiB, and Elasticsearch 2 GiB with a 512 MiB heap.
+
+Elasticsearch clock warnings can follow host sleep or clock correction under WSL.
+Check the host/VM time and readiness; do not delete persistent data to clear them.
+If ports 9200/5601 are occupied, set `ELASTICSEARCH_PORT`/`KIBANA_PORT` in `.env`.
+The configured `node.store.allow_mmap=false` avoids requiring a host sysctl change.
+
+## A bind mount fails after restarting Docker Desktop/WSL
+
+Desktop can retain a stale cross-distro bind path after a host restart. A
+PostgreSQL startup error mentioning `shopsphere.conf` and "not a directory" can
+mean the old file mount was restored as an empty directory. Confirm the source
+`postgres/postgresql.conf` still exists, verify the log volume, and recreate
+containers using their retained named volumes:
+
+```bash
+bash elastic/prepare-docker-logs.sh
+docker compose up --force-recreate -d --wait --wait-timeout 360
+```
+
+This replaces containers without deleting orders, indexed logs, or collection
+state. For the older native database, use
+`docker compose -f postgres/compose.yml up --force-recreate -d --wait`.
+
+## Old logs reappear or source storage grows
+
+Keep Agent input IDs, fingerprints, and its state volume stable. Deleting the
+registry or changing file identities can cause replay; an unacknowledged batch
+may duplicate after a crash. Docker rotates three 10 MB files, but container
+removal deletes them. PostgreSQL rotates files without age-based cleanup; monitor
+the data volume and plan separate archival/cleanup for long-running use.
+Elasticsearch's seven-day lifecycle applies after index rollover and does not
+delete source files. See the [Phase 6 lesson](phase-06-centralized-logging.md).
+
 This guide covers the Phase 5 Compose application and the earlier native
 Python/NGINX workflow. Telemetry pipeline checks follow in later phases.
 
@@ -33,8 +108,9 @@ apply startup-only settings.
 ## localhost cannot reach another container
 
 Inside a container, localhost is that container. Compose configures the API with
-`postgres:5432` and `payment:8001` and NGINX with `api:8000`. Only NGINX has a host
-port. Inspect DNS with:
+`postgres:5432` and `payment:8001` and NGINX with `api:8000`. NGINX is the only
+application host port; Elasticsearch/Kibana have separate loopback ports.
+Inspect DNS with:
 
 ```bash
 docker compose exec api python -c "import socket; print(socket.gethostbyname('postgres'))"

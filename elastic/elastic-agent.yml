@@ -1,0 +1,59 @@
+outputs:
+  default:
+    type: elasticsearch
+    hosts: [http://elasticsearch:9200]
+
+inputs:
+  - type: filestream
+    id: shopsphere-container-files
+    use_output: default
+    streams:
+      - id: shopsphere-container-stream
+        data_stream:
+          type: logs
+          dataset: shopsphere.container
+          namespace: lab
+        paths: [/var/log/docker/*/*-json.log*]
+        # Include Docker's timestamp/labels beyond common startup text.
+        prospector.scanner.fingerprint.length: 1024
+        parsers:
+          - ndjson:
+              target: docker
+              add_error_key: true
+        processors:
+          - script:
+              lang: javascript
+              id: shopsphere-project-filter
+              file: /usr/share/elastic-agent/docker-source.js
+              params:
+                project: ${env.SHOPSPHERE_PROJECT}
+
+  - type: filestream
+    id: shopsphere-postgresql-files
+    use_output: default
+    streams:
+      - id: shopsphere-postgresql-stream
+        data_stream:
+          type: logs
+          dataset: shopsphere.postgresql
+          namespace: lab
+        paths: [/var/log/postgresql/*.json]
+        prospector.scanner.fingerprint.length: 64
+        fields_under_root: true
+        fields:
+          service.name: postgresql
+          labels.compose_project: ${env.SHOPSPHERE_PROJECT}
+          labels.compose_service: postgres
+          shopsphere.source: postgresql
+
+agent.monitoring:
+  enabled: true
+  logs: false
+  metrics: false
+  http:
+    enabled: true
+    host: localhost
+    port: 6791
+
+agent.logging.to_stderr: true
+agent.logging.to_files: false

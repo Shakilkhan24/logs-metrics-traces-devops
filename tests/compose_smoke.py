@@ -126,7 +126,7 @@ def main():
         command.extend(["--file", str(network_override)])
         if not arguments.no_build:
             print("Building images", flush=True)
-            compose("build", timeout=600)
+            compose("build", "api", "payment", "db-init", "nginx", timeout=600)
 
         print("Checking that failed initialization blocks the API", flush=True)
         with tempfile.TemporaryDirectory(prefix=project) as directory:
@@ -151,6 +151,7 @@ def main():
                 "--wait",
                 "--wait-timeout",
                 "120",
+                "nginx",
                 check=False,
             )
             assert failed.returncode != 0
@@ -161,7 +162,9 @@ def main():
             "Checking fresh startup, health, image users, and port boundaries",
             flush=True,
         )
-        compose("up", "--no-build", "--detach", "--wait", "--wait-timeout", "120")
+        compose(
+            "up", "--no-build", "--detach", "--wait", "--wait-timeout", "120", "nginx"
+        )
         base = base_url()
         assert inspect("db-init")["State"]["ExitCode"] == 0
         for service in ("api", "payment", "nginx", "postgres"):
@@ -303,7 +306,9 @@ def main():
         assert volume.startswith(project + "_")
         compose("down", "--timeout", "40")
         run(["docker", "volume", "inspect", volume])
-        compose("up", "--no-build", "--detach", "--wait", "--wait-timeout", "120")
+        compose(
+            "up", "--no-build", "--detach", "--wait", "--wait-timeout", "120", "nginx"
+        )
         base = base_url()
         assert json.loads(request(base, order_path)[2]) == order
         assert len(json.loads(request(base, "/products")[2])) == 3

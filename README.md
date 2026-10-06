@@ -3,11 +3,11 @@
 A hands-on learning project for understanding how logs, metrics, and distributed
 traces help explain the behavior of an e-commerce application.
 
-**Current milestone: Phase 5 — the complete application runs in Docker Compose.**
-Start NGINX, FastAPI, PostgreSQL, and mock payment with `docker compose up`.
-The client enters through NGINX on localhost:8088; the other services communicate
-on a Docker network. Database initialization runs automatically, and orders live
-in a persistent volume. Centralized logs, metrics, and tracing follow later.
+**Current milestone: Phase 6 — centralized logs are searchable in Kibana.**
+Start the application and Elastic stack with `docker compose up`. The client
+enters through NGINX on localhost:8088. Elastic Agent collects the application,
+proxy, and database logs; Elasticsearch indexes them, and Kibana on localhost:5601
+lets you follow requests across services. Metrics and tracing follow later.
 
 The original project brief is preserved in
 [docs/implementation-spec.md](docs/implementation-spec.md).
@@ -29,7 +29,7 @@ make a focused Git commit.
 | 3 | PostgreSQL persistence and slow-query exercises | Complete |
 | 4 | NGINX reverse proxy and request logging | Complete |
 | 5 | Docker images and a runnable Docker Compose application | Complete |
-| 6 | Centralized logs with Elastic Agent, Elasticsearch, and Kibana | Planned |
+| 6 | Centralized logs with Elastic Agent, Elasticsearch, and Kibana | Complete |
 | 7 | Prometheus metrics, exporters, and Grafana dashboards | Planned |
 | 8 | OpenTelemetry instrumentation, Collector, and Jaeger | Planned |
 | 9 | Correlation exercises across logs, metrics, and traces | Planned |
@@ -54,12 +54,15 @@ persistence, and slow-query evidence extend that foundation. The
 [Phase 4 lesson](docs/phase-04-nginx.md) adds the proxy boundary, upstream timings,
 access logs, and error logs. The [Phase 5 lesson](docs/phase-05-docker-compose.md)
 explains images, containers, service discovery, volumes, and startup readiness.
+The [Phase 6 lesson](docs/phase-06-centralized-logging.md) explains collection,
+parsing, field mappings, data streams, retention, and cross-service searches.
 
 ## 3. Architecture Diagram
 
 The diagram describes the **target system**. The request path through NGINX,
-FastAPI, PostgreSQL, and the mock payment service is implemented. Telemetry
-collection, storage, and visualization backends remain planned.
+FastAPI, PostgreSQL, and mock payment is implemented, as is the centralized logging
+path through Elastic Agent, Elasticsearch, and Kibana. Metrics and tracing remain
+planned.
 
 ```mermaid
 flowchart LR
@@ -98,7 +101,7 @@ METRICLOGTRACES/
 ├── .gitattributes
 ├── .gitignore
 ├── .dockerignore            # Allow only image build inputs
-├── docker-compose.yml      # Complete application, network, and database volume
+├── docker-compose.yml      # Application and logging stack, networks, volumes
 ├── README.md
 ├── requirements.in          # Direct runtime dependencies
 ├── requirements.txt         # Pinned runtime dependency set
@@ -120,7 +123,7 @@ METRICLOGTRACES/
 │   └── dashboards/          # Versioned dashboard definitions
 ├── otel/                    # OpenTelemetry Collector configuration
 ├── jaeger/                  # Trace storage and exploration configuration
-├── tests/                   # API/proxy tests and an isolated Compose smoke script
+├── tests/                   # API/proxy tests and isolated application/logging checks
 └── docs/
     ├── architecture.md
     ├── implementation-spec.md
@@ -130,6 +133,7 @@ METRICLOGTRACES/
     ├── phase-03-postgresql.md
     ├── phase-04-nginx.md
     ├── phase-05-docker-compose.md
+    ├── phase-06-centralized-logging.md
     └── troubleshooting.md
 ```
 
@@ -159,8 +163,8 @@ errors. This is log correlation, not tracing yet.
 
 ## 5. Logging Pipeline
 
-**Planned in Phase 6:** application, NGINX, and PostgreSQL logs → Elastic Agent →
-Elasticsearch → Kibana.
+**Implemented in Phase 6:** application, NGINX, and PostgreSQL logs → Elastic Agent
+→ Elasticsearch → Kibana.
 
 Containerized NGINX writes JSON access events to stdout and native text errors
 to stderr; inspect them with `docker compose logs nginx`. Access events include
@@ -180,10 +184,17 @@ its data volume. Statements taking at least 250 ms are logged. Validated request
 IDs are attached to application SQL as comments, connecting database logs with
 the API logs. See the Phase 3 lesson for log inspection commands.
 
-Elastic Agent will collect and
-prepare log events; Elasticsearch will index them for search; Kibana will provide
-the interface for investigating them. Native PostgreSQL JSON and application JSON
-have different field names; collection and normalization arrive in Phase 6.
+Elastic Agent reads Docker JSON files through a read-only mount and publishes only
+this Compose project's API, payment, initializer, and NGINX records. A separate
+read-only volume subpath supplies native PostgreSQL JSON. No Docker socket is
+mounted. This collection scope excludes the earlier native Phase 3–4 services.
+
+Elasticsearch normalizes timestamps, severity, service names, request IDs, and
+durations. `event.duration` is in nanoseconds across sources. Raw events remain in
+`event.original`; parsing failures receive `tags: parse_error`. The two data streams
+match `logs-shopsphere.*-lab`, exposed by the **ShopSphere logs** Kibana data view.
+Agent offsets, indexed logs, and database files have separate persistence needs.
+See the [lesson](docs/phase-06-centralized-logging.md) for retention and outage limits.
 
 ## 6. Metrics Pipeline
 
@@ -221,8 +232,10 @@ Compose v2 plugin and Linux containers. Verify `docker version` and
 `docker compose version`. This milestone was tested with Engine 28.3.0 and
 Compose 2.38.1. Run the commands below from the repository root in Bash/WSL.
 
-The images pin Python 3.12.15, NGINX 1.30.5, and PostgreSQL 18.6 by version and
-digest. The first build requires network access to download images and Python
+The images pin Python 3.12.15, NGINX 1.30.5, PostgreSQL 18.6, and Elastic Stack 9.5.4
+by version and digest. Allocate roughly 6 GiB or more to Docker for the combined
+lab and several GiB for images. Volume-subpath support is required. The first
+build requires network access to download images and Python
 packages. No host Python environment or NGINX installation is needed to run
 the Compose application.
 
@@ -251,22 +264,30 @@ they use temporary unprivileged ports and need no sudo.
 
 ## 9. Running the System
 
-Start the complete application and follow its logs:
+Prepare the external Docker log volume once, then start the complete system.
+The helper supports native Linux and Docker Desktop/WSL:
 
 ```bash
+bash elastic/prepare-docker-logs.sh
 docker compose up
 ```
+
+The helper is safe to rerun. Its volume definition survives restarts and is
+mounted read-only by Agent. See [collection setup](elastic/README.md) for details,
+custom names/paths, and the Docker Desktop Windows CLI used from WSL.
 
 Or build explicitly and wait for healthy services in the background:
 
 ```bash
-docker compose up --build -d --wait
+docker compose up --build -d --wait --wait-timeout 360
 docker compose ps --all
 curl -i http://127.0.0.1:8088/products
 ```
 
-Open [the API documentation](http://127.0.0.1:8088/docs). Only NGINX has a host
-port. The API uses `postgres:5432` and `payment:8001` inside the Compose network;
+Open [the API documentation](http://127.0.0.1:8088/docs) and
+[Kibana Discover](http://127.0.0.1:5601/app/discover). NGINX, Elasticsearch (9200),
+and Kibana (5601) publish loopback ports. Elasticsearch and Kibana have no TLS or
+authentication in this local lab. The API uses `postgres:5432` and `payment:8001`;
 NGINX forwards to `api:8000` and refreshes DNS after container replacement.
 
 Startup waits for PostgreSQL health, successful `db-init`, and payment health
@@ -275,6 +296,10 @@ before starting the API, then waits for API health before starting NGINX.
 the catalogue without erasing orders; it is not a schema migration tool.
 `/proxy-health` checks NGINX alone, while the API's health check uses `/products`
 to include database access. Health checks also generate ordinary request logs.
+Separately, `elastic-setup` installs the ingest pipeline, mappings, lifecycle
+policy, streams, and data view after Elasticsearch/Kibana become healthy. Its
+successful exit permits Agent startup. Application startup does not depend on
+the logging backend.
 
 The default project is `shopsphere`, with data volume `shopsphere_postgres_data`.
 It is separate from the earlier `shopsphere-phase3` project and its orders.
@@ -295,7 +320,10 @@ docker compose down
 ```
 
 `stop` keeps containers and data. `down` removes this project's containers and
-network but retains its database volume. Adding `--volumes` deletes its data.
+networks but retains database, Elasticsearch, and Agent state volumes. Adding
+`--volumes` deletes their data and collection progress.
+The external `shopsphere_docker_logs` volume is only a read-only view of Docker's
+source directory and is not removed by Compose.
 After source changes, run `docker compose up --build -d --wait`; restarting a
 container alone does not copy updated source into its image.
 
@@ -304,9 +332,27 @@ For the host-process workflow from earlier phases, follow the
 
 ## 10. Testing Telemetry
 
+Generate events for centralized search:
+
+```bash
+curl -H 'X-Request-ID: phase6-payment' http://127.0.0.1:8088/payment
+curl -H 'X-Request-ID: phase6-slow' http://127.0.0.1:8088/slow-query
+curl -H 'X-Request-ID: phase6-error' http://127.0.0.1:8088/error
+```
+
+In Kibana Discover choose **ShopSphere logs**, set **Last 15 minutes**, and search
+`request_id: "phase6-payment"`. Expect API, payment, and NGINX records. The slow
+request instead includes PostgreSQL evidence. Add `service.name`, `event.action`,
+`log.level`, `event.duration`, and `message` as columns.
+
+Run `python3 tests/logging_smoke.py` for isolated end-to-end log checks, including
+parser failures, filtering, registry persistence, and backend outage recovery.
+It starts a separate Elastic stack with temporary ports, requiring additional
+memory; see the [Phase 6 lesson](docs/phase-06-centralized-logging.md).
+
 The Compose lifecycle check uses only host Python 3 and Docker. It creates a
 unique project, assigns a temporary host port, builds images, and removes only
-its own containers and volume afterward:
+its own containers and volume afterward. It starts only application services:
 
 ```bash
 python3 tests/compose_smoke.py
@@ -387,7 +433,9 @@ port, database readiness, persistence, proxy errors, and log-location problems.
 This repository will teach production concepts through a local lab. Future
 production discussions will cover authentication, TLS, secret management,
 telemetry retention, trace sampling, backups, availability, and alerting.
-Those capabilities have not been implemented. The current lab also uses a local
+Authentication, TLS, backups, and high availability are not implemented. The lab
+has an Elasticsearch rollover/deletion policy but no automatic age-based cleanup
+of PostgreSQL source logs. The current lab also uses a local
 database owner account and an explicit table-creation command. Production needs
 separate migration/runtime roles, managed secrets, schema migrations, and a
 backup/recovery plan; a persistent Docker volume alone is not a backup.
@@ -400,4 +448,4 @@ to volumes. Then we will discuss Helm packaging, the Prometheus Operator,
 Elastic's Kubernetes integration, and a production Jaeger deployment.
 
 Kubernetes is a later learning extension. The next implementation milestone is
-**Phase 6: collect logs with Elastic Agent, Elasticsearch, and Kibana**.
+**Phase 7: metrics monitoring with Prometheus, exporters, and Grafana**.

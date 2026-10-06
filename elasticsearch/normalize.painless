@@ -1,0 +1,59 @@
+// Source fields stay in event.original; only deliberate fields become searchable.
+ctx.event = ctx.containsKey('event') ? ctx.event : new HashMap();
+ctx.log = ctx.containsKey('log') ? ctx.log : new HashMap();
+ctx.shopsphere = ctx.containsKey('shopsphere') ? ctx.shopsphere : new HashMap();
+if (ctx.shopsphere.containsKey('collected_time')) {
+  ctx._time = ctx.shopsphere.remove('collected_time');
+}
+if (!ctx.containsKey('_parsed')) {
+  ctx.event.action = ctx.service.name == 'nginx' ? 'proxy.error' : 'process.output';
+  if (!ctx.log.containsKey('level')) { ctx.log.level = 'info'; }
+  return;
+}
+def p = ctx.remove('_parsed');
+if (ctx.service.name == 'postgresql') {
+  ctx._time = p.timestamp;
+  ctx.log.level = p.error_severity.toLowerCase();
+  ctx.message = p.message;
+  ctx.event.action = 'database.server';
+  ctx.process = ['pid': p.pid];
+  ctx.postgresql = new HashMap();
+  for (def key : ['dbname', 'user', 'statement', 'state_code', 'detail', 'hint', 'backend_type']) {
+    if (p.containsKey(key)) { ctx.postgresql[key] = p[key]; }
+  }
+  ctx._sql = p.containsKey('statement') ? p.statement : p.message;
+} else {
+  if (p.containsKey('time')) { ctx._time = p.time; }
+  if (p.containsKey('message')) { ctx.message = p.message; }
+  if (p.containsKey('event')) { ctx.event.action = p.event; }
+  if (p.containsKey('level')) { ctx.log.level = p.level.toLowerCase(); }
+  else if (p.containsKey('status_code')) {
+    ctx.log.level = p.status_code >= 500 ? 'error' : p.status_code >= 400 ? 'warning' : 'info';
+  }
+  if (p.request_id != null) { ctx.request_id = p.request_id; }
+  if (p.trace_id != null) { ctx.trace = ['id': p.trace_id]; }
+  if (p.containsKey('method')) { ctx.http = ['request': ['method': p.method]]; }
+  if (p.containsKey('status_code')) {
+    if (!ctx.containsKey('http')) { ctx.http = new HashMap(); }
+    ctx.http.response = ['status_code': p.status_code];
+  }
+  if (p.containsKey('route')) { ctx.url = ['path': p.route]; }
+  if (p.containsKey('path')) { ctx.url = ['path': p.path]; }
+  if (p.containsKey('duration_ms')) { ctx.event.duration = (long)(p.duration_ms * 1000000); }
+  if (p.containsKey('request_duration_seconds')) {
+    ctx.event.duration = (long)(p.request_duration_seconds * 1000000000);
+    ctx.nginx = new HashMap();
+    for (def key : ['connection', 'connection_requests', 'upstream_address', 'upstream_status', 'upstream_connect_seconds', 'upstream_header_seconds', 'upstream_response_seconds']) {
+      if (p.containsKey(key)) { ctx.nginx[key] = p[key]; }
+    }
+    ctx.message = p.method + ' ' + p.path + ' → ' + p.status_code;
+  }
+  for (def key : ['order_id', 'item_count', 'total_cents', 'payment_id', 'db_operation', 'query_name', 'db_backend_pid', 'sqlstate', 'upstream_status']) {
+    if (p.containsKey(key)) { ctx.shopsphere[key] = p[key]; }
+  }
+  if (p.containsKey('error_type') || p.containsKey('exception')) {
+    ctx.error = new HashMap();
+    if (p.containsKey('error_type')) { ctx.error.type = p.error_type; }
+    if (p.containsKey('exception')) { ctx.error.stack_trace = p.exception; }
+  }
+}
