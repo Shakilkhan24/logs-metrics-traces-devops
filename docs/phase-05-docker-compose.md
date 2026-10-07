@@ -6,7 +6,7 @@ NGINX, FastAPI, PostgreSQL, and mock payment. Logs remain at their sources;
 central collection starts in Phase 6.
 
 This lesson describes the Phase 5 milestone. The current Compose file also
-includes Phase 6 logging services and uses ShopSphere image tags `0.6.0`.
+includes Phase 6 logging and Phase 7 metrics services, with application tags `0.7.0`.
 Use `docker compose up --build -d --wait nginx` to start only the application
 dependencies for these exercises, or follow the
 [Phase 6 startup guide](phase-06-centralized-logging.md) for the combined stack.

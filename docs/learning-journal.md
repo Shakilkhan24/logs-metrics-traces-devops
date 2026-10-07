@@ -520,3 +520,112 @@ Follow [Phase 6](phase-06-centralized-logging.md). Find one payment and one slow
 query across services in Discover. Explain the differences between source files,
 the Agent registry, indexed documents, and a data view. Phase 7 will add
 Prometheus metrics, exporters, and Grafana. Tracing remains Phase 8.
+
+## 2026-10-06–07 — Phase 7: Metrics and dashboards
+
+Commit subject: `feat: implement metrics monitoring stack`.
+
+### What changed and why
+
+The API and payment service now expose Prometheus metrics. Per-application
+registries count HTTP requests and server errors and measure HTTP/SQL execution
+with histograms. Route templates and bounded categories keep IDs and SQL text
+out of metric labels. Application images are version 0.7.0.
+
+Prometheus scrapes six targets every five seconds: both applications, NGINX,
+PostgreSQL, Linux kernel/storage metrics, and itself. NGINX's status listener and
+all exporter ports stay internal. A rerunnable database job creates a separate
+`pg_monitor` login without permission to read application tables. Prometheus and
+Grafana use persistent volumes, and three dashboards plus the data source are
+provisioned from versioned files. Application startup remains independent of
+monitoring availability.
+
+### DevOps concepts introduced
+
+Pull-based collection, exposition formats, time-series labels and cardinality,
+counters versus rates, gauges, cumulative histogram buckets and estimated
+percentiles, SQL timer boundaries, exporter health versus source health, PromQL,
+dashboard provisioning, scrape gaps, counter resets, and time-series retention.
+The lesson distinguishes transaction/row statistics from SQL execution counts
+and explains why a five-second database wait must fit inside HTTP latency.
+
+### Problems found during implementation
+
+Whole-host-root mounts proved unreliable on Docker Desktop/WSL. Recursive root
+views caused mount propagation and mount-count problems; a direct root bind also
+interfered with WSL integration. Those approaches and their helper were removed.
+The final collector has no host-root, proc/sys bind, or host PID namespace. Native
+collectors read global Linux kernel CPU, memory, and block I/O counters through
+the container's normal proc/sys views. On Desktop those counters describe the
+Linux VM, not Windows or individual container limits.
+
+WSL Windows-share mount metadata also broke the native filesystem parser. A
+small `stat` loop now measures the filesystem containing Docker's log directory
+through the existing non-recursive, read-only log volume. It atomically publishes
+capacity and available bytes through node exporter's textfile collector. Success,
+parse-error, and sample-age signals reveal failed or stale measurements. It does
+not enumerate all host filesystems or measure the size of the log files.
+
+Docker Desktop required recovery after the mount experiments and WSL restarts.
+The Ubuntu native daemon was temporarily the default; its identity differed from
+the Desktop daemon holding the lab. Validation resumed only after restoring the
+original Desktop connection. Main database and Elastic data volumes were retained.
+The logging smoke test now starts only its own required services, avoiding
+unrelated metrics services and fixed-port conflicts in its disposable project.
+
+### Verification
+
+- All 55 pytest cases passed, including bounded labels, per-app isolation,
+  exactly-once server-error counting, real slow SQL, and failed-query histograms.
+- The application Compose smoke suite passed initialization failure, dependency
+  outages, DNS recovery after API replacement, and order persistence with 0.7.0
+  images. Monitoring is not required for application-only startup.
+- The metrics smoke suite passed all six scrape targets, collector health,
+  monitoring-role permissions, idempotent role setup, HTTP/SQL observations,
+  every dashboard query, and Grafana data-source provisioning.
+- Collector removal/replacement left NGINX and the Docker API usable. Exporter
+  and database outages were visible; application requests continued during
+  Prometheus/Grafana downtime. Historical samples and dashboards survived their
+  container replacement, and new samples arrived after recovery.
+- The centralized logging regression passed parser/mapping checks, cross-service
+  correlation, project filtering, Agent offset persistence without replay, and
+  delivery after Elasticsearch downtime. Both disposable telemetry projects
+  and their own volumes were removed.
+- Collector memory matched Docker's 12,393,308,160-byte VM total rather than its
+  128 MiB container limit. Storage size matched `stat` on the Docker log view.
+- Ruff lint/format, shell syntax, Compose configuration, pinned `promtool`
+  validation, local documentation links, and whitespace checks passed. All 14
+  README sections and the original specification checksum remain intact.
+
+### Runtime left after verification
+
+The main `shopsphere` project has twelve running services: nine report healthy
+through Docker health checks, and three exporters are verified through Prometheus.
+All three initialization jobs exited 0. Prometheus reports six healthy targets;
+Grafana's data source reports OK and all three dashboards are provisioned.
+The UIs are available on loopback ports 9090 and 3000, with the documented initial
+Grafana login `admin` / `shopsphere_local`.
+
+Fresh `phase7-live-payment`, `phase7-live-slow`, and `phase7-live-error` requests
+produced the expected metrics and searchable cross-service logs without parsing
+failures. The main order `ab88ce70-07a0-4092-ba7a-65d20daf60b2`, both earlier Phase 3
+orders, and nine historical Phase 6 verification log records remain available.
+The separate Phase 3 database is healthy. The user's untracked `cmd.sh` and local
+`.env` were left untouched and excluded from the commit.
+
+### Production equivalent and limits
+
+Production needs authenticated/TLS endpoints, secret management, discovery,
+resource budgets, high availability or remote storage, alert rules, and backups.
+The application currently runs one worker per container; multiple workers need a
+supported metrics aggregation design. Histogram percentiles are estimates, and
+scrape gaps cannot recover intermediate gauge values. Prometheus retains seven
+days or 512 MB of blocks; its active head, WAL, and compaction need extra space.
+
+### Learner checkpoint and next phase
+
+Follow [Phase 7](phase-07-metrics.md). Generate slow queries and server errors,
+inspect the dashboards, and find the corresponding requests in Kibana. Explain
+why `up` and `pg_up` differ, what resets when an application restarts, and which
+machine and filesystem the infrastructure dashboard describes. Phase 8 will add
+OpenTelemetry instrumentation, Collector, and Jaeger; tracing is still planned.

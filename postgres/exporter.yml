@@ -1,0 +1,3 @@
+# Single-target mode uses DATA_SOURCE_* environment variables.
+# No multi-target authentication modules are needed in this local lab.
+auth_modules: {}

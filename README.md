@@ -3,11 +3,13 @@
 A hands-on learning project for understanding how logs, metrics, and distributed
 traces help explain the behavior of an e-commerce application.
 
-**Current milestone: Phase 6 — centralized logs are searchable in Kibana.**
-Start the application and Elastic stack with `docker compose up`. The client
+**Current milestone: Phase 7 — metrics and dashboards are running alongside logs.**
+After the source-volume setup below, start the stack with `docker compose up`. The client
 enters through NGINX on localhost:8088. Elastic Agent collects the application,
 proxy, and database logs; Elasticsearch indexes them, and Kibana on localhost:5601
-lets you follow requests across services. Metrics and tracing follow later.
+lets you follow requests across services. Prometheus scrapes application and exporter
+metrics; Grafana on localhost:3000 shows application, database, and infrastructure
+dashboards. Distributed tracing follows in Phase 8.
 
 The original project brief is preserved in
 [docs/implementation-spec.md](docs/implementation-spec.md).
@@ -30,7 +32,7 @@ make a focused Git commit.
 | 4 | NGINX reverse proxy and request logging | Complete |
 | 5 | Docker images and a runnable Docker Compose application | Complete |
 | 6 | Centralized logs with Elastic Agent, Elasticsearch, and Kibana | Complete |
-| 7 | Prometheus metrics, exporters, and Grafana dashboards | Planned |
+| 7 | Prometheus metrics, exporters, and Grafana dashboards | Complete |
 | 8 | OpenTelemetry instrumentation, Collector, and Jaeger | Planned |
 | 9 | Correlation exercises across logs, metrics, and traces | Planned |
 
@@ -56,13 +58,15 @@ access logs, and error logs. The [Phase 5 lesson](docs/phase-05-docker-compose.m
 explains images, containers, service discovery, volumes, and startup readiness.
 The [Phase 6 lesson](docs/phase-06-centralized-logging.md) explains collection,
 parsing, field mappings, data streams, retention, and cross-service searches.
+The [Phase 7 lesson](docs/phase-07-metrics.md) explains counters, gauges, histograms,
+scraping, PromQL, dashboards, cardinality, and exporter measurement boundaries.
 
 ## 3. Architecture Diagram
 
 The diagram describes the **target system**. The request path through NGINX,
 FastAPI, PostgreSQL, and mock payment is implemented, as is the centralized logging
-path through Elastic Agent, Elasticsearch, and Kibana. Metrics and tracing remain
-planned.
+path through Elastic Agent, Elasticsearch, and Kibana. Prometheus, exporters,
+and Grafana are implemented. Distributed tracing remains planned.
 
 ```mermaid
 flowchart LR
@@ -79,6 +83,7 @@ flowchart LR
     ES --> Kibana
 
     API -. metrics .-> Prometheus
+    Payment -. metrics .-> Prometheus
     Exporters[NGINX, PostgreSQL, host exporters] -. metrics .-> Prometheus
     Prometheus --> Grafana
 
@@ -101,7 +106,7 @@ METRICLOGTRACES/
 ├── .gitattributes
 ├── .gitignore
 ├── .dockerignore            # Allow only image build inputs
-├── docker-compose.yml      # Application and logging stack, networks, volumes
+├── docker-compose.yml      # Application, logs, and metrics; networks and volumes
 ├── README.md
 ├── requirements.in          # Direct runtime dependencies
 ├── requirements.txt         # Pinned runtime dependency set
@@ -120,10 +125,11 @@ METRICLOGTRACES/
 ├── prometheus/              # Scrape configuration
 ├── grafana/
 │   ├── README.md
-│   └── dashboards/          # Versioned dashboard definitions
+│   ├── dashboards/          # Versioned dashboard definitions
+│   └── provisioning/        # Data source and dashboard provider
 ├── otel/                    # OpenTelemetry Collector configuration
 ├── jaeger/                  # Trace storage and exploration configuration
-├── tests/                   # API/proxy tests and isolated application/logging checks
+├── tests/                   # API/proxy tests and isolated application/logging/metrics checks
 └── docs/
     ├── architecture.md
     ├── implementation-spec.md
@@ -134,6 +140,7 @@ METRICLOGTRACES/
     ├── phase-04-nginx.md
     ├── phase-05-docker-compose.md
     ├── phase-06-centralized-logging.md
+    ├── phase-07-metrics.md
     └── troubleshooting.md
 ```
 
@@ -198,17 +205,23 @@ See the [lesson](docs/phase-06-centralized-logging.md) for retention and outage 
 
 ## 6. Metrics Pipeline
 
-**Planned in Phase 7:** application `/metrics` and infrastructure exporters →
-Prometheus → Grafana.
+**Implemented in Phase 7:** Python `/metrics` endpoints and NGINX, PostgreSQL,
+and node exporters → Prometheus → Grafana.
 
-Prometheus will periodically request, or scrape, metric endpoints. Exporters
-translate measurements from systems such as PostgreSQL into a format Prometheus
-understands. Grafana will query those stored time series to display request
-rates, latency, errors, database activity, and host resource usage.
-
-The application metric families will include `http_requests_total`,
+Prometheus pulls six targets every five seconds and stores samples in its own
+persistent volume. Grafana provisions three dashboards and its Prometheus data
+source automatically. Application metric families are `http_requests_total`,
 `http_request_duration_seconds`, `database_query_duration_seconds`, and
-`application_errors_total`.
+`application_errors_total`. Durations are seconds; labels use route templates
+and bounded categories, never request IDs or raw SQL.
+
+NGINX exposes aggregate `stub_status` on an internal listener. The database
+exporter uses a separate monitoring login. Node exporter measures Linux kernel
+CPU, memory, and block I/O; on Desktop these describe its Linux VM. Docker storage
+filesystem capacity comes from the existing read-only Docker log directory view.
+These measurements exclude Windows and individual container resource limits.
+All exporter ports stay internal. See the [Phase 7 lesson](docs/phase-07-metrics.md)
+for measurement limits and practical PromQL exercises.
 
 ## 7. Tracing Pipeline
 
@@ -233,7 +246,9 @@ Compose v2 plugin and Linux containers. Verify `docker version` and
 Compose 2.38.1. Run the commands below from the repository root in Bash/WSL.
 
 The images pin Python 3.12.15, NGINX 1.30.5, PostgreSQL 18.6, and Elastic Stack 9.5.4
-by version and digest. Allocate roughly 6 GiB or more to Docker for the combined
+by version and digest. Metrics images pin Prometheus 3.15.0, Grafana 13.2.3,
+NGINX exporter 1.5.3, PostgreSQL exporter 0.20.1, and node exporter 1.12.1.
+Allocate roughly 8 GiB or more to Docker for the combined
 lab and several GiB for images. Volume-subpath support is required. The first
 build requires network access to download images and Python
 packages. No host Python environment or NGINX installation is needed to run
@@ -264,7 +279,7 @@ they use temporary unprivileged ports and need no sudo.
 
 ## 9. Running the System
 
-Prepare the external Docker log volume once, then start the complete system.
+Prepare the external Docker log view, then start the complete system.
 The helper supports native Linux and Docker Desktop/WSL:
 
 ```bash
@@ -272,9 +287,11 @@ bash elastic/prepare-docker-logs.sh
 docker compose up
 ```
 
-The helper is safe to rerun. Its volume definition survives restarts and is
-mounted read-only by Agent. See [collection setup](elastic/README.md) for details,
-custom names/paths, and the Docker Desktop Windows CLI used from WSL.
+The log helper is safe to rerun. Its volume definition survives restarts and is
+mounted read-only. See [log collection](elastic/README.md) for custom paths and
+the Windows CLI used from WSL. The helper needs exported overrides, not `.env`.
+Node exporter reuses that source volume to measure Docker storage capacity; see
+[host metrics](prometheus/README.md) for its Linux kernel and filesystem scope.
 
 Or build explicitly and wait for healthy services in the background:
 
@@ -286,8 +303,11 @@ curl -i http://127.0.0.1:8088/products
 
 Open [the API documentation](http://127.0.0.1:8088/docs) and
 [Kibana Discover](http://127.0.0.1:5601/app/discover). NGINX, Elasticsearch (9200),
-and Kibana (5601) publish loopback ports. Elasticsearch and Kibana have no TLS or
-authentication in this local lab. The API uses `postgres:5432` and `payment:8001`;
+Kibana (5601), Prometheus (9090), and Grafana (3000) publish loopback ports.
+NGINX publishes port 8088.
+Open [Grafana](http://127.0.0.1:3000) with initial login **admin / shopsphere_local**,
+and [Prometheus](http://127.0.0.1:9090) to inspect targets and queries.
+Elasticsearch and Kibana have no TLS or authentication in this local lab. The API uses `postgres:5432` and `payment:8001`;
 NGINX forwards to `api:8000` and refreshes DNS after container replacement.
 
 Startup waits for PostgreSQL health, successful `db-init`, and payment health
@@ -299,7 +319,8 @@ to include database access. Health checks also generate ordinary request logs.
 Separately, `elastic-setup` installs the ingest pipeline, mappings, lifecycle
 policy, streams, and data view after Elasticsearch/Kibana become healthy. Its
 successful exit permits Agent startup. Application startup does not depend on
-the logging backend.
+the logging or metrics backends. `metrics-db-init` creates the PostgreSQL monitoring
+role and must also exit 0; Grafana provisions its data source and three dashboards.
 
 The default project is `shopsphere`, with data volume `shopsphere_postgres_data`.
 It is separate from the earlier `shopsphere-phase3` project and its orders.
@@ -320,8 +341,8 @@ docker compose down
 ```
 
 `stop` keeps containers and data. `down` removes this project's containers and
-networks but retains database, Elasticsearch, and Agent state volumes. Adding
-`--volumes` deletes their data and collection progress.
+networks but retains database, Elasticsearch, Agent state, Prometheus, and Grafana
+volumes. Adding `--volumes` deletes their data, history, and collection progress.
 The external `shopsphere_docker_logs` volume is only a read-only view of Docker's
 source directory and is not removed by Compose.
 After source changes, run `docker compose up --build -d --wait`; restarting a
@@ -331,6 +352,24 @@ For the host-process workflow from earlier phases, follow the
 [native startup commands](docs/phase-04-nginx.md#run-the-local-proxy).
 
 ## 10. Testing Telemetry
+
+For metrics, open Grafana's **ShopSphere** folder. Generate slow requests and
+errors using the commands below and allow two or more five-second scrapes.
+Application panels show rates and histogram estimates; database panels separate
+transactions, rows, and SQL execution. Infrastructure panels describe the Linux
+host/VM. Health probes contribute a small baseline; `/metrics` scrapes exclude
+themselves from application HTTP counters.
+
+```bash
+curl -s http://127.0.0.1:8088/metrics
+python3 tests/metrics_smoke.py
+```
+
+The isolated metrics smoke suite checks all targets, monitoring permissions,
+every dashboard query, collector replacement, outages, and retained history.
+Prometheus and Grafana outages do not stop application requests. Missed scrapes
+are not backfilled. Metrics persist for seven days or 512 MB of retained blocks;
+active data and the WAL require additional disk space.
 
 Generate events for centralized search:
 
@@ -390,7 +429,7 @@ They stop only the processes they created. Existing lab servers need not be runn
 | `GET /slow-query` | Real PostgreSQL delay; default 5 seconds, configurable from 0 to 5 |
 | `GET /error` | Intentional 500, error log, and request log |
 | `GET /payment` | HTTP simulation; 200 on success, 502/504 on dependency failures |
-| `GET /metrics` | Planned for Phase 7; currently absent |
+| `GET /metrics` | Prometheus exposition; excluded from HTTP request/error metrics |
 
 Follow the [Phase 5 walkthrough](docs/phase-05-docker-compose.md) to inspect
 container lifecycle, logs, and persistence. Uvicorn's own startup messages
@@ -433,7 +472,8 @@ port, database readiness, persistence, proxy errors, and log-location problems.
 This repository will teach production concepts through a local lab. Future
 production discussions will cover authentication, TLS, secret management,
 telemetry retention, trace sampling, backups, availability, and alerting.
-Authentication, TLS, backups, and high availability are not implemented. The lab
+Grafana has a local login; the remaining lab endpoints lack authentication.
+TLS, backups, and high availability are not implemented. The lab
 has an Elasticsearch rollover/deletion policy but no automatic age-based cleanup
 of PostgreSQL source logs. The current lab also uses a local
 database owner account and an explicit table-creation command. Production needs
@@ -448,4 +488,4 @@ to volumes. Then we will discuss Helm packaging, the Prometheus Operator,
 Elastic's Kubernetes integration, and a production Jaeger deployment.
 
 Kubernetes is a later learning extension. The next implementation milestone is
-**Phase 7: metrics monitoring with Prometheus, exporters, and Grafana**.
+**Phase 8: distributed tracing with OpenTelemetry, Collector, and Jaeger**.

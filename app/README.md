@@ -18,7 +18,7 @@ Files and responsibilities:
 | `metrics.py` | Request, error, and database measurements | 7 |
 | `tracing.py` | OpenTelemetry setup and instrumentation | 8 |
 
-The API, database, and Docker files are implemented. Metrics and tracing remain
+The API, database, Docker, and metrics files are implemented. Tracing remains
 planned. The Compose API is reached through NGINX on host port 8088.
 
 `Dockerfile` uses Python 3.12.15 and the pinned runtime requirements, includes the
@@ -35,3 +35,9 @@ See the [Phase 3 lesson](../docs/phase-03-postgresql.md) for database examples a
 the [native Phase 4 commands](../docs/phase-04-nginx.md#run-the-local-proxy) for
 running behind NGINX. The [Phase 5 lesson](../docs/phase-05-docker-compose.md)
 explains container startup, service-name URLs, and forwarding-header trust.
+
+`metrics.py` gives each app instance an independent Prometheus registry. The API
+and payment service expose `/metrics`; middleware records bounded HTTP categories,
+and SQLAlchemy records successful/failed cursor durations. All durations use
+seconds. Request IDs, raw SQL, and order IDs are not metric labels. See the
+[Phase 7 lesson](../docs/phase-07-metrics.md) for timing and single-worker limits.

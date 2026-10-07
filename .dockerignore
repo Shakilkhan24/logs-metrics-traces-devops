@@ -17,3 +17,6 @@
 !elastic/Dockerfile
 !elastic/elastic-agent.yml
 !elastic/docker-source.js
+!prometheus/
+!prometheus/Dockerfile
+!prometheus/host-filesystem.sh

@@ -1,5 +1,53 @@
 # Troubleshooting
 
+## Metrics targets are down or Grafana has no data
+
+Open Prometheus on port 9090 and inspect **Status → Targets**. Six jobs should
+be up. `up=1` confirms a scrape, while `pg_up`, `nginx_up`, and
+`node_scrape_collector_success` describe source collection. Check:
+
+```bash
+curl -s http://127.0.0.1:8088/metrics
+curl -s 'http://127.0.0.1:9090/api/v1/targets'
+docker compose logs --tail 30 prometheus nginx-exporter postgres-exporter node-exporter
+```
+
+`metrics-db-init` must exit 0 before the database exporter starts. Its separate
+monitoring login needs `pg_monitor`; don't substitute the application owner as a
+routine repair. NGINX status listens on internal port 8089, not public port 8088.
+Health checks generate a small baseline; `/metrics` excludes itself.
+
+Grafana's initial login is `admin` / `shopsphere_local`. Environment overrides set
+initial credentials only; an existing account remains in `grafana_data`. Open
+the **ShopSphere** folder, choose a recent range, generate traffic, and allow at
+least two scrapes. A rate needs multiple samples; a percentile with no requests
+can be a gap. Confirm the provisioned data source is `http://prometheus:9090`,
+not host localhost. Dashboard edits belong in JSON; polling takes up to 30 seconds.
+
+## Host metrics look different from Windows or Docker stats
+
+On Docker Desktop/WSL, CPU, memory, and block I/O describe the shared Linux VM
+kernel, not Windows or an individual container's limits. On native Linux they
+describe the Docker host. Storage capacity describes the filesystem containing
+Docker's log directory, normally Docker's data disk, rather than every host mount.
+
+WSL can put unescaped spaces in Windows-share mount metadata. Instead of using
+the affected filesystem parser, this lab measures `/docker-storage` with `stat`
+and publishes it through node exporter's textfile reader. Check
+`shopsphere_docker_storage_collection_success`, `node_textfile_scrape_error`, and
+the **Storage capacity sample age** panel. An increasing age means stale values;
+inspect `docker compose logs node-exporter`. Run `bash elastic/prepare-docker-logs.sh`
+if the external source volume is missing, even for metrics-only startup. The
+collector needs no whole-host-root bind or recursive host volume.
+
+## Samples are missing after sleep or backend restart
+
+Prometheus does not backfill missed scrapes. Existing samples survive replacement
+in `prometheus_data`, but gauges during an outage are lost and process counters
+may reset. Use `rate()` before summing counters. WSL clock corrections can produce
+out-of-order sample warnings; check system/VM time, allow it to stabilize, and
+retry. Do not delete retained history as a routine clock repair.
+
 ## Kibana is empty although Agent is healthy
 
 Choose **ShopSphere logs** in Discover, set **Last 15 minutes**, generate a new
@@ -38,7 +86,7 @@ being read (1024 bytes for Docker, 64 for PostgreSQL).
 
 The initial images are large and Kibana needs time to initialize saved objects.
 Use `--wait-timeout 360`, inspect `docker stats --no-stream`, and allocate roughly
-6 GiB or more for the combined lab. The standalone logging smoke test launches a
+8 GiB or more for the combined lab. The standalone logging smoke test launches a
 second Elastic stack; temporarily stop the regular Agent, Kibana, and Elasticsearch
 to free memory, then restore them after the test. Their volumes remain intact.
 The Agent limit is 1 GiB, Kibana 1.5 GiB, and Elasticsearch 2 GiB with a 512 MiB heap.
@@ -75,8 +123,8 @@ the data volume and plan separate archival/cleanup for long-running use.
 Elasticsearch's seven-day lifecycle applies after index rollover and does not
 delete source files. See the [Phase 6 lesson](phase-06-centralized-logging.md).
 
-This guide covers the Phase 5 Compose application and the earlier native
-Python/NGINX workflow. Telemetry pipeline checks follow in later phases.
+This guide covers the Compose application, logs, metrics, and earlier native
+Python/NGINX workflow.
 
 ## Compose startup fails or a service is unhealthy
 
@@ -109,7 +157,7 @@ apply startup-only settings.
 
 Inside a container, localhost is that container. Compose configures the API with
 `postgres:5432` and `payment:8001` and NGINX with `api:8000`. NGINX is the only
-application host port; Elasticsearch/Kibana have separate loopback ports.
+application host port; the telemetry UIs have separate loopback ports.
 Inspect DNS with:
 
 ```bash

@@ -9,13 +9,14 @@ from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings
 from app.logging import REQUEST_ID_PATTERN, configure_logging, request_id_context
+from app.metrics import Metrics
 from app.models import Base, ProductRecord
 
 logger = logging.getLogger("shopsphere.order-api")
 
 
 class Database:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, *, metrics: Metrics | None = None) -> None:
         self.engine = create_engine(
             settings.database_url.get_secret_value(),
             pool_pre_ping=True,
@@ -43,6 +44,8 @@ class Database:
         @event.listens_for(self.engine, "after_cursor_execute")
         def after_query(connection, cursor, statement, parameters, context, many):
             duration = (perf_counter() - context.shopsphere_started) * 1000
+            if metrics is not None:
+                metrics.observe_query(statement, duration / 1000, "success")
             logger.log(
                 logging.WARNING if duration >= 250 else logging.INFO,
                 "Database query completed",
@@ -57,6 +60,12 @@ class Database:
 
         @event.listens_for(self.engine, "handle_error")
         def query_failed(context):
+            execution = context.execution_context
+            started = getattr(execution, "shopsphere_started", None)
+            if metrics is not None and started is not None:
+                metrics.observe_query(
+                    context.statement or "", perf_counter() - started, "error"
+                )
             logger.error(
                 "Database query failed",
                 extra={

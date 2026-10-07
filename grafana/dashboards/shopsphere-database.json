@@ -1,0 +1,402 @@
+{
+  "uid": "shopsphere-database",
+  "title": "ShopSphere / Database",
+  "description": "PostgreSQL server statistics plus SQL cursor timing from the application. Transactions and rows are not query counts.",
+  "tags": [
+    "shopsphere",
+    "phase7"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "timezone": "browser",
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Database connections",
+      "description": "Current server-side connections, including the exporter.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "shopsphere-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "pg_stat_database_numbackends{datname=\"shopsphere\"}",
+          "legendFormat": "{{datname}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "shopsphere-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Transactions per second",
+      "description": "Database transaction counters also include monitoring activity.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "shopsphere-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(pg_stat_database_xact_commit{datname=\"shopsphere\"}[$__rate_interval])",
+          "legendFormat": "commits",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "shopsphere-prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "rate(pg_stat_database_xact_rollback{datname=\"shopsphere\"}[$__rate_interval])",
+          "legendFormat": "rollbacks",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "shopsphere-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Application SQL executions per second",
+      "description": "SQL cursor executions observed in this API process, including readiness queries. Pool waits and commits are not timed here.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "shopsphere-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (operation, outcome) (rate(database_query_duration_seconds_count{service=\"order-api\"}[$__rate_interval]))",
+          "legendFormat": "{{operation}} {{outcome}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "shopsphere-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Application SQL latency p95",
+      "description": "Success and failed executions are measured separately. A connection failure before cursor execution has no SQL duration.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "shopsphere-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, operation, outcome) (rate(database_query_duration_seconds_bucket{service=\"order-api\"}[$__rate_interval])))",
+          "legendFormat": "{{operation}} {{outcome}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "shopsphere-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Database rows per second",
+      "description": "Rows accessed by PostgreSQL, not application request volume.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "shopsphere-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(pg_stat_database_tup_returned{datname=\"shopsphere\"}[$__rate_interval])",
+          "legendFormat": "returned",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "shopsphere-prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "rate(pg_stat_database_tup_fetched{datname=\"shopsphere\"}[$__rate_interval])",
+          "legendFormat": "fetched",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "shopsphere-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Shared buffer hit ratio",
+      "description": "PostgreSQL buffer hits divided by hits plus reads; does not include the OS cache. Idle periods can be gaps.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "shopsphere-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(pg_stat_database_blks_hit{datname=\"shopsphere\"}[$__rate_interval]) / (rate(pg_stat_database_blks_hit{datname=\"shopsphere\"}[$__rate_interval]) + rate(pg_stat_database_blks_read{datname=\"shopsphere\"}[$__rate_interval]))",
+          "legendFormat": "buffer hit ratio",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "shopsphere-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Exporter and database health",
+      "description": "A reachable exporter can still report a failed database connection.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "shopsphere-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "up{job=\"postgresql\"}",
+          "legendFormat": "exporter scrape",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "shopsphere-prometheus"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "pg_up",
+          "legendFormat": "database connection",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "shopsphere-prometheus"
+          }
+        },
+        {
+          "refId": "C",
+          "expr": "pg_exporter_last_scrape_error",
+          "legendFormat": "collection error (0 is healthy)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "shopsphere-prometheus"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    }
+  ]
+}

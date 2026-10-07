@@ -50,7 +50,7 @@ services:
 
   db-init:
     <<: *python
-    image: shopsphere-db-init:0.6.0
+    image: shopsphere-db-init:0.7.0
     command: ["python", "-m", "app.database"]
     environment: *database-environment
     depends_on:
@@ -60,7 +60,7 @@ services:
 
   payment:
     <<: *python
-    image: shopsphere-payment:0.6.0
+    image: shopsphere-payment:0.7.0
     command: ["python", "-m", "uvicorn", "payment.main:app", "--host", "0.0.0.0", "--port", "8001", "--no-access-log", "--no-proxy-headers"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/', timeout=2).close()"]
@@ -73,7 +73,7 @@ services:
 
   api:
     <<: *python
-    image: shopsphere-api:0.6.0
+    image: shopsphere-api:0.7.0
     # The API has no host port. All peers on this lab network are trusted.
     command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--proxy-headers", "--forwarded-allow-ips", "*"]
     environment:
@@ -99,7 +99,7 @@ services:
     build:
       context: .
       dockerfile: nginx/Dockerfile
-    image: shopsphere-nginx:0.6.0
+    image: shopsphere-nginx:0.7.0
     ports:
       - "127.0.0.1:${SHOPSPHERE_PORT:-8088}:8088"
     depends_on:
@@ -222,6 +222,142 @@ services:
     networks: [telemetry]
     logging: *logging
 
+  metrics-db-init:
+    image: postgres:18.6-bookworm@sha256:3725f4e2499eef5134592b3b4ab79a543ed7f8e533b05b5b637af926630f6650
+    entrypoint: ["psql"]
+    command: ["-v", "ON_ERROR_STOP=1", "-f", "/setup/metrics-role.sql"]
+    environment:
+      PGHOST: postgres
+      PGUSER: shopsphere
+      PGPASSWORD: shopsphere_local
+      PGDATABASE: shopsphere
+    volumes:
+      - ./postgres/metrics-role.sql:/setup/metrics-role.sql:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    user: "999:999"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+    networks: [app]
+    logging: *logging
+
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:1.5.3@sha256:85666e7fde7e253f1c6d978f9a961245df4c9cdb7677e1866d9bb28e8f9ee41d
+    command: ["--nginx.scrape-uri=http://nginx:8089/stub_status"]
+    depends_on:
+      nginx:
+        condition: service_healthy
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 64m
+    restart: unless-stopped
+    networks: [app]
+    logging: *logging
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    command: ["--config.file=/etc/postgres_exporter.yml", "--collection-timeout=3s"]
+    environment:
+      DATA_SOURCE_URI: postgres:5432/shopsphere?sslmode=disable&connect_timeout=2
+      DATA_SOURCE_USER: shopsphere_metrics
+      DATA_SOURCE_PASS: metrics_local
+    volumes:
+      - ./postgres/exporter.yml:/etc/postgres_exporter.yml:ro
+    depends_on:
+      metrics-db-init:
+        condition: service_completed_successfully
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    restart: unless-stopped
+    networks: [app]
+    logging: *logging
+
+  node-exporter:
+    build:
+      context: .
+      dockerfile: prometheus/Dockerfile
+    image: shopsphere-node-exporter:0.7.0
+    init: true
+    command:
+      - --collector.disable-defaults
+      - --collector.cpu
+      - --collector.meminfo
+      - --collector.textfile
+      - --collector.textfile.directory=/textfile
+      - --collector.diskstats
+      - --collector.uname
+    volumes:
+      # Non-recursive existing source view; stat measures its storage filesystem.
+      - docker_logs:/docker-storage:ro
+    user: "65534:65534"
+    read_only: true
+    tmpfs:
+      - /textfile:uid=65534,gid=65534,mode=0755
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    restart: unless-stopped
+    networks: [telemetry]
+    logging: *logging
+
+  prometheus:
+    image: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.size=512MB
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9090/-/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    mem_limit: 512m
+    restart: unless-stopped
+    networks: [app, telemetry]
+    logging: *logging
+
+  grafana:
+    image: grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-shopsphere_local}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    mem_limit: 512m
+    restart: unless-stopped
+    networks: [telemetry]
+    logging: *logging
+
 networks:
   app:
     driver: bridge
@@ -229,6 +365,8 @@ networks:
     driver: bridge
 
 volumes:
+  prometheus_data:
+  grafana_data:
   docker_logs:
     external: true
     name: ${DOCKER_LOG_VOLUME:-shopsphere_docker_logs}

@@ -1,0 +1,26 @@
+global:
+  scrape_interval: 5s
+  scrape_timeout: 4s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: order-api
+    static_configs:
+      - targets: [api:8000]
+  - job_name: mock-payment
+    static_configs:
+      - targets: [payment:8001]
+  - job_name: nginx
+    static_configs:
+      - targets: [nginx-exporter:9113]
+  - job_name: postgresql
+    static_configs:
+      - targets: [postgres-exporter:9187]
+  - job_name: linux-host
+    static_configs:
+      - targets: [node-exporter:9100]
+        labels:
+          scope: docker-linux-kernel
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]

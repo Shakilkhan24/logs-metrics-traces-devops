@@ -18,6 +18,7 @@ from app.logging import (
     configure_logging,
     request_id_context,
 )
+from app.metrics import Metrics, MetricsMiddleware
 from app.schemas import Order, OrderCreate, PaymentResult, Product
 from app.store import PostgresStore, UnknownProductError
 
@@ -30,11 +31,12 @@ def create_app(
     payment_transport: httpx.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     config = settings if settings is not None else Settings.from_env()
+    metrics = Metrics("order-api")
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
         configure_logging("order-api")
-        database = Database(config)
+        database = Database(config, metrics=metrics)
         try:
             try:
                 database.check_ready()
@@ -62,11 +64,14 @@ def create_app(
 
     application = FastAPI(
         title="ShopSphere Order API",
-        version="0.6.0",
-        description="Phase 6: centralized logs with Elastic Agent and Kibana.",
+        version="0.7.0",
+        description="Phase 7: Prometheus metrics and Grafana dashboards.",
         lifespan=lifespan,
     )
     application.add_middleware(RequestLoggingMiddleware, service="order-api")
+    application.add_middleware(MetricsMiddleware, metrics=metrics)
+    application.state.metrics = metrics
+    application.add_api_route("/metrics", metrics.response, include_in_schema=False)
 
     @application.exception_handler(SQLAlchemyError)
     async def database_error(request: Request, exc: SQLAlchemyError):
@@ -81,7 +86,7 @@ def create_app(
         return {
             "service": "order-api",
             "status": "ok",
-            "phase": 6,
+            "phase": 7,
             "storage": "postgresql",
         }
 

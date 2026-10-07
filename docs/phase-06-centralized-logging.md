@@ -1,5 +1,8 @@
 # Phase 6 — Centralized logging
 
+The current Compose file also includes Phase 7 metrics. See the
+[Phase 7 lesson](phase-07-metrics.md) for the added services and host measurement scope.
+
 Logs explain individual failures, but switching between containers slows an
 investigation. This phase puts application, proxy, and database events into one
 searchable store. Collection runs outside the application's request path.

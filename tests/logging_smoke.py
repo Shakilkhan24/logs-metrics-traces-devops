@@ -141,9 +141,25 @@ def main():
     print(f"Checking private logging project {project}", flush=True)
     try:
         if not args.no_build:
-            compose("build", timeout=600)
+            compose(
+                "build",
+                "api",
+                "payment",
+                "db-init",
+                "nginx",
+                "elastic-agent",
+                timeout=600,
+            )
         compose(
-            "up", "-d", "--no-build", "--wait", "--wait-timeout", "360", timeout=480
+            "up",
+            "-d",
+            "--no-build",
+            "--wait",
+            "--wait-timeout",
+            "360",
+            "nginx",
+            "elastic-agent",
+            timeout=480,
         )
         es, kibana, base = (
             endpoint("elasticsearch", 9200),

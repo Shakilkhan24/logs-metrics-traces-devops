@@ -1,8 +1,8 @@
 # Architecture
 
-Status: Phase 6 runs the application and centralized logging through Compose.
-Elastic Agent collects logs, Elasticsearch indexes them, and Kibana searches them.
-Metrics and tracing backends remain planned.
+Status: Phase 7 runs the application, centralized logging, and metrics through Compose.
+Elastic Agent collects logs for Elasticsearch/Kibana; Prometheus scrapes metrics
+for Grafana. Distributed tracing remains planned.
 The [main README](../README.md#3-architecture-diagram) contains the target diagram.
 
 Current path: client → NGINX → FastAPI → SQLAlchemy/Psycopg → PostgreSQL. A separate
@@ -10,9 +10,10 @@ Current path: client → NGINX → FastAPI → SQLAlchemy/Psycopg → PostgreSQL
 not trigger payment.
 
 The root `docker-compose.yml` defines project `shopsphere`, application and
-telemetry bridge networks, seven long-running services, and two initialization
+telemetry bridge networks, twelve long-running services, and three initialization
 jobs. NGINX publishes `127.0.0.1:8088`; Elasticsearch and Kibana publish loopback
-ports 9200 and 5601. NGINX forwards to `api:8000`; the API uses
+ports 9200 and 5601; Prometheus and Grafana publish 9090 and 3000. Exporter ports
+and NGINX status port 8089 remain internal. NGINX forwards to `api:8000`; the API uses
 `postgres:5432` and `payment:8001`. Service names resolve through Docker DNS.
 NGINX re-resolves its upstream so an API address change needs no proxy restart.
 
@@ -59,7 +60,7 @@ the database, and shutdown disposes the pool.
 
 ## System boundaries
 
-ShopSphere will have two connected parts: the services that handle shopping
+ShopSphere has two connected parts: the services that handle shopping
 requests and the services that help us understand their behavior.
 
 | Component | Responsibility | Connects to |
@@ -94,7 +95,7 @@ executable placeholders in Phase 1.
 The project uses the existing workspace root. The additional `payment/` directory
 gives the required mock payment service its own source location.
 
-## Planned request and signal flows
+## Request and signal flows
 
 The request path is client → NGINX → FastAPI → database and/or payment service.
 The API's business logic determines which downstream operations are needed.
@@ -121,9 +122,28 @@ Elasticsearch data live in separate persistent volumes. Source rotation can lose
 unread events during a long output outage; failed batches may be replayed.
 
 Metrics flow from the application and exporters to Prometheus in response to
-scrapes initiated by Prometheus. Grafana queries Prometheus. Exporters measure
-the system they can access; under Docker Desktop or WSL, the Linux environment
-being measured must be verified before calling those measurements “host” metrics.
+scrapes initiated by Prometheus every five seconds. Prometheus joins both networks;
+Grafana queries it over telemetry DNS. Each Python app owns a registry and runs one
+worker process. HTTP counters use route templates and bounded methods/statuses;
+SQL cursor histograms distinguish success and failure. Scrape requests exclude
+themselves; existing health checks remain ordinary measured requests.
+
+NGINX's internal status listener supplies aggregate connections/request counts.
+The database exporter uses a separate `pg_monitor` role installed by the rerunnable
+`metrics-db-init` job, without grants on application table contents. Node exporter
+reads global Linux kernel CPU, memory, and block I/O counters through its normal
+proc/sys views. On Desktop these describe the Linux VM. Docker storage capacity
+uses `stat` through the existing non-recursive, read-only Docker log source volume,
+with atomic textfile publication, collection success, and sample-age signals.
+This measures the filesystem containing Docker's logs; it excludes other host
+filesystems, Windows metrics, and container resource limits. The trusted collector
+runs as non-root with dropped capabilities and no host root or Docker socket mount.
+
+Prometheus retains time-series blocks for seven days or 512 MB, with additional
+space needed for its WAL/head and compaction. Grafana provisions its data source
+and three versioned dashboards, retaining accounts/preferences in a separate
+volume. Neither backend gates application startup. Missing scrapes create gaps;
+persistent storage preserves older samples but cannot reconstruct those gaps.
 
 Spans flow from instrumented services to the Collector and then to Jaeger. The
 FastAPI and payment services will propagate trace context over HTTP, while
@@ -143,8 +163,8 @@ claiming that the proxy appears as a span.
 ## Timing and correlation
 
 A trace ID connects related spans and can also be written into application logs.
-Metric labels will describe bounded categories, such as route templates and
-outcomes. Per-request IDs will not become metric labels, because each unique
+Metric labels describe bounded categories, such as route templates and
+outcomes. Per-request IDs do not become metric labels, because each unique
 label combination creates a separate time series.
 
 For a request that synchronously waits on a five-second SQL operation, its parent
@@ -160,5 +180,6 @@ proxy's host port; `PAYMENT_TIMEOUT_SECONDS` changes the HTTP client timeout.
 Compose injects service-name connection URLs; native defaults still use localhost.
 Elastic components pin matching 9.5.4 images. The lab disables Elastic security
 and binds host ports to loopback; production requires authentication and TLS.
-Future metrics/tracing storage and capacity settings will be chosen when those
-services are added.
+Metrics components also pin image versions/digests. Grafana has a configurable
+initial local account; Prometheus is unauthenticated on loopback. Tracing storage
+and capacity choices remain for Phase 8.

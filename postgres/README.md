@@ -49,3 +49,10 @@ container and network while retaining the volume; `down --volumes` deletes data.
 No runtime database files are committed to Git.
 
 Log collection and database metrics arrive in Phases 6 and 7.
+
+Phase 7 adds `metrics-role.sql`, run by the separate `metrics-db-init` Compose job
+on both new and retained databases. It creates the `shopsphere_metrics` login
+with `pg_monitor`, without granting access to application table rows. The exporter
+reads server statistics through that login; its `exporter.yml` uses single-target
+environment settings. The role's local password is `metrics_local`. Production
+needs managed credentials and a reviewed monitoring privilege boundary.
