@@ -744,3 +744,72 @@ find a slow SQL child, and inspect an intentional exception. Explain the parent
 IDs, why PostgreSQL spans belong to the API, why NGINX has no span, and why an
 unsampled request can return an ID absent from Jaeger. Phase 9 will connect logs,
 metrics, and traces through complete debugging exercises.
+
+## 2026-10-08 — Phase 9: Correlate logs, metrics, and traces
+
+Commit subject: `feat: correlate logs metrics and traces`.
+
+### What changed and why
+
+The lab-owned Kibana data view now formats `trace.id` as a Jaeger URL, preserving
+the visible ID as its label and opening the trace separately. Setup accepts
+`JAEGER_PUBLIC_URL` for the browser-facing address; the Collector continues using
+the internal service address. Rerunning setup installs the formatter for an
+existing lab. This is a presentation change, with no new ingest mapping or
+application image rebuild required.
+
+The Phase 9 walkthrough connects aggregate latency/error metrics to concrete
+request logs and then spans. It covers slow checkout before and after removing
+the delay, an intentional exception, and the separate mock-payment request.
+`tests/correlation_smoke.py` checks the running stack and prints links, IDs,
+durations, and evidence counts. It retains two small demonstration orders for
+the learner to inspect. README now marks all nine implementation phases complete.
+
+### Concepts and boundaries
+
+Metrics locate a route and time window; logs identify an individual request;
+trace parent-child relationships explain its operations. A trace ID is distinct
+from a request ID. Native NGINX/PostgreSQL logs join through the request ID,
+while application events have the distributed trace ID. The guide explains
+milliseconds versus nanoseconds versus seconds, histogram estimates, scrape
+delay, retention differences, sampling, and counter resets.
+
+Metric labels remain bounded: this phase adds no request-ID labels or exemplars.
+The injected checkout delay demonstrates diagnosis and recovery, not an index
+optimization. Orders do not invoke payment, so the payment request is explored
+separately. Application images remain version 0.8.0 because Phase 9 changes setup,
+the walkthrough, and validation rather than the application binary.
+
+### Verification and observed evidence
+
+The updated bootstrap succeeded and a second run preserved the same data-view
+formatter. The correlation smoke check verified the installed URL format,
+cross-service Elasticsearch events, matching Jaeger traces, a SQL span lasting
+at least one second, an error span, and the Prometheus order counter increasing
+by at least two after scraping.
+
+| Scenario | Observed client duration | Logs | Spans |
+| --- | --- | --- | --- |
+| Checkout with a one-second SQL delay | 1.045 s | 8 | 5 |
+| Checkout without the injected delay | 0.012 s | 6 | 4 |
+| Mock payment | 0.010 s | 5 | 3 |
+| Intentional 500 | 0.005 s | 3 | 1 |
+
+These are local observations, not performance guarantees. The retained demo
+orders are `805e0f69-25f6-47b4-8e69-d0a5e0d56b78` and
+`0d425616-3db6-4d38-a0e2-f6427308f76f`. Their trace IDs are
+`3ab51228e6733bf74679cc109151c00f` and `3dd48c20ca8b01300626313819b42612`;
+trace retention remains 48 hours. Phase 8's 60 passing cases and lifecycle,
+logging, metrics, and tracing smoke results remain the application baseline.
+Final Ruff lint/format checks, Compose validation, documentation links, and all
+14 README sections passed. The original specification hash is unchanged. The
+stack has 14 running services, nine healthy Docker probes, and four successful
+initializers; disposable test projects were removed.
+
+### Production equivalent and completion checkpoint
+
+All nine phases of the Compose learning project are implemented. Explain the
+slow request using all three signals and follow its Kibana link into Jaeger.
+Production extensions still include access control, TLS, deliberate sampling,
+alerts, backups, shared storage, availability, and a Kubernetes migration.
+These remain explicitly outside the completed local lab.

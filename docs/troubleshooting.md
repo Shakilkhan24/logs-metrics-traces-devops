@@ -1,5 +1,15 @@
 # Troubleshooting
 
+## Kibana trace links are missing or point to the wrong port
+
+Select **ShopSphere logs**, add `trace.id`, and inspect an API or payment event.
+Native NGINX and PostgreSQL logs use `request_id` instead. Run
+`docker compose run --rm --no-deps elastic-setup` to install the formatter, then
+reload Discover. For a custom browser address, set `JAEGER_PUBLIC_URL` in `.env`
+and rerun setup. A link can outlive its trace because retention differs; incoming
+unsampled requests also carry IDs without exporting spans. Follow the
+[correlation walkthrough](phase-09-correlation.md).
+
 ## Jaeger is running but a trace is missing
 
 Use `curl -i http://127.0.0.1:8088/payment` and copy `X-Trace-ID`. Open

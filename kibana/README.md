@@ -37,6 +37,13 @@ Native NGINX errors have a connection number, not a request ID. Match
 `nginx.connection` with access events in the same container and time window;
 keep-alive means a connection can serve several requests.
 
+Add `trace.id` to Discover. Application events display a clickable Jaeger link;
+native proxy and database events use the request-ID bridge. Setup provisions the
+formatter automatically. To update an existing lab, run
+`docker compose run --rm --no-deps elastic-setup` and reload Discover.
+Set `JAEGER_PUBLIC_URL` in `.env` if the browser uses a different Jaeger address.
+
 No Fleet enrollment or extra integration is required. This is an unauthenticated
-local lab bound to loopback. Trace links arrive in Phase 9; a request ID is not
-a distributed trace ID. See the [Phase 6 lesson](../docs/phase-06-centralized-logging.md).
+local lab bound to loopback. A request ID is not a distributed trace ID.
+See the [Phase 9 walkthrough](../docs/phase-09-correlation.md) and
+[Phase 6 lesson](../docs/phase-06-centralized-logging.md).

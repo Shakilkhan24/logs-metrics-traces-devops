@@ -3,7 +3,7 @@
 A hands-on learning project for understanding how logs, metrics, and distributed
 traces help explain the behavior of an e-commerce application.
 
-**Current milestone: Phase 8 — logs, metrics, and distributed traces are running.**
+**All nine phases complete — logs, metrics, traces, and correlation exercises are running.**
 After the source-volume setup below, start the stack with `docker compose up`. The client
 enters through NGINX on localhost:8088. Elastic Agent collects the application,
 proxy, and database logs; Elasticsearch indexes them, and Kibana on localhost:5601
@@ -11,6 +11,8 @@ lets you follow requests across services. Prometheus scrapes application and exp
 metrics; Grafana on localhost:3000 shows application, database, and infrastructure
 dashboards. OpenTelemetry exports HTTP and SQL spans through the Collector to
 Jaeger on localhost:16686.
+Follow the [final correlation walkthrough](docs/phase-09-correlation.md) to move
+from a Grafana latency change to Kibana logs and a clickable Jaeger trace.
 
 The original project brief is preserved in
 [docs/implementation-spec.md](docs/implementation-spec.md).
@@ -35,7 +37,7 @@ make a focused Git commit.
 | 6 | Centralized logs with Elastic Agent, Elasticsearch, and Kibana | Complete |
 | 7 | Prometheus metrics, exporters, and Grafana dashboards | Complete |
 | 8 | OpenTelemetry instrumentation, Collector, and Jaeger | Complete |
-| 9 | Correlation exercises across logs, metrics, and traces | Planned |
+| 9 | Correlation exercises across logs, metrics, and traces | Complete |
 
 ## 2. Observability Concepts
 
@@ -47,8 +49,8 @@ make a focused Git commit.
 
 These signals complement each other. A latency metric can reveal a trend; a
 trace can locate a slow database call; a log can explain an error from that call.
-Application logs include active trace IDs. Phase 9 develops the complete
-cross-signal debugging workflow.
+Application logs include active trace IDs. Kibana formats `trace.id` as a Jaeger
+link; the Phase 9 walkthrough connects metrics, logs, and traces.
 
 Start with the [repository foundations](docs/learning-notes.md#phase-1-repository-foundations),
 then follow the [Phase 2 lesson](docs/phase-02-fastapi.md) to learn HTTP routes,
@@ -64,6 +66,8 @@ The [Phase 7 lesson](docs/phase-07-metrics.md) explains counters, gauges, histog
 scraping, PromQL, dashboards, cardinality, and exporter measurement boundaries.
 The [Phase 8 lesson](docs/phase-08-distributed-tracing.md) explains spans, W3C
 propagation, sampling, parent-child timing, queues, and trace storage.
+The [Phase 9 lesson](docs/phase-09-correlation.md) completes the investigation
+workflow with slow checkout, payment, and error scenarios.
 
 ## 3. Architecture Diagram
 
@@ -146,6 +150,7 @@ METRICLOGTRACES/
     ├── phase-06-centralized-logging.md
     ├── phase-07-metrics.md
     ├── phase-08-distributed-tracing.md
+    ├── phase-09-correlation.md
     └── troubleshooting.md
 ```
 
@@ -372,6 +377,16 @@ For the host-process workflow from earlier phases, follow the
 
 ## 10. Testing Telemetry
 
+Run the complete correlation check against the running stack:
+
+```bash
+python3 tests/correlation_smoke.py
+```
+
+It creates two retained demonstration orders, verifies matching logs and traces,
+checks the Prometheus order counter, and prints Kibana/Jaeger links. See the
+[Phase 9 guide](docs/phase-09-correlation.md) for the walkthrough and custom URLs.
+
 For tracing, generate requests and copy `X-Trace-ID` from the response headers
 into [Jaeger](http://127.0.0.1:16686). The payment path produces three spans across
 two services. A slow SQL span sits inside the API request; `/error` produces a
@@ -489,10 +504,10 @@ API's SQL event and PostgreSQL's slow-statement log, read with
 For a slow checkout, use `POST /orders?db_delay_seconds=5` with a normal order body. The default order path
 has no artificial delay. Both delay parameters reject values outside 0–5 seconds.
 
-The final exercise will be “checkout became slow.” We will use this controlled
-database delay, find the latency increase in Grafana, locate related events in
-Kibana, and inspect the database span in Jaeger. After removing the delay, we will
-repeat the request and confirm the improvement in all three signals.
+The [final exercise](docs/phase-09-correlation.md) is “checkout became slow.” Use
+the controlled database delay, inspect latency in Grafana, locate request events
+in Kibana, and click `trace.id` to inspect the database span in Jaeger. Compare a
+second request without the delay and explain the evidence in all three signals.
 
 Removing `db_delay_seconds` removes the injected wait; compare the SQL and request
 durations. This is an intentional delay exercise, not a query-index optimization.
@@ -522,5 +537,6 @@ containers to Kubernetes workloads, networking to Services, and persistent data
 to volumes. Then we will discuss Helm packaging, the Prometheus Operator,
 Elastic's Kubernetes integration, and a production Jaeger deployment.
 
-Kubernetes is a later learning extension. The next implementation milestone is
-**Phase 9: correlate logs, metrics, and traces in complete debugging exercises**.
+All nine implementation phases are complete. Kubernetes is a later learning
+extension; start with the [final correlation walkthrough](docs/phase-09-correlation.md)
+to practice the complete Compose lab.

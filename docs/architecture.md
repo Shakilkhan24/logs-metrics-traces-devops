@@ -158,7 +158,8 @@ SDK validates incoming context, samples new roots, and respects a remote parent'
 sampling flag. Application responses expose `X-Trace-ID`; application JSON logs
 include the active trace/span IDs. Request IDs still correlate native proxy and
 PostgreSQL logs, including the validated SQL comment. Those source logs do not
-claim native spans. Phase 9 develops the full cross-signal workflow.
+claim native spans. Phase 9 completes the cross-signal workflow: Kibana formats
+`trace.id` as a Jaeger link; route/time context connects aggregate metrics to logs.
 
 The tracing storage initializer assigns UID 10001 ownership of the two volume
 roots. Collector and Jaeger run as that user with read-only root filesystems and
@@ -185,7 +186,7 @@ span covers that wait. Additional sequential work extends the total request
 duration. The original brief's 500 ms application work and five-second database
 work therefore imply approximately 5.5 seconds overall in that scenario.
 
-## Decisions deferred to their implementation phases
+## Implemented choices and production extensions
 
 Python dependencies are pinned. The container bases pin Python 3.12.15, NGINX
 1.30.5, and PostgreSQL 18.6 by version and digest. `SHOPSPHERE_PORT` changes the
@@ -197,4 +198,5 @@ Metrics components also pin image versions/digests. Grafana has a configurable
 initial local account; Prometheus is unauthenticated on loopback. Tracing pins
 Collector Contrib 0.162.0 and Jaeger 2.22.0 by digest, with a bounded local queue
 and single-node Badger storage. Shared trace storage and availability are
-production extensions; correlation exercises are Phase 9.
+production extensions. The [Phase 9 exercises](phase-09-correlation.md) verify
+matching logs, traces, and aggregate metric changes in the running stack.

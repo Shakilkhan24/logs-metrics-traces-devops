@@ -10,6 +10,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 ES = os.environ.get("ELASTICSEARCH_URL", "http://elasticsearch:9200")
 KIBANA = os.environ.get("KIBANA_URL", "http://kibana:5601")
+JAEGER_PUBLIC = os.environ.get("JAEGER_PUBLIC_URL", "http://127.0.0.1:16686").rstrip(
+    "/"
+)
 HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
@@ -60,6 +63,16 @@ def main():
                 "name": "ShopSphere logs",
                 "title": "logs-shopsphere.*-lab",
                 "timeFieldName": "@timestamp",
+                "fieldFormats": {
+                    "trace.id": {
+                        "id": "url",
+                        "params": {
+                            "urlTemplate": JAEGER_PUBLIC + "/trace/{{value}}",
+                            "labelTemplate": "{{value}}",
+                            "openLinkInCurrentTab": False,
+                        },
+                    }
+                },
             },
             "override": True,
         },

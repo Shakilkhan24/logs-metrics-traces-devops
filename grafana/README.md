@@ -32,3 +32,8 @@ See the [dashboard guide](dashboards/README.md) and
 [Phase 7 lesson](../docs/phase-07-metrics.md). The metrics smoke test checks the
 provisioned data source, all three dashboard UIDs, and every panel's PromQL against
 real samples, including persistence after replacing Grafana and Prometheus.
+
+Use the [Phase 9 walkthrough](../docs/phase-09-correlation.md) to investigate a
+latency change across Grafana, Kibana, and Jaeger. Metrics identify a route and
+time window; the matching log supplies the trace ID. This lab does not add
+request IDs to metric labels or configure metric exemplars.
