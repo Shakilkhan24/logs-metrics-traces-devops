@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from time import perf_counter
 from uuid import uuid4
 
+from opentelemetry import trace
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -36,14 +37,19 @@ EVENT_FIELDS = (
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
+        span_context = trace.get_current_span().get_span_context()
         event = {
             "time": datetime.fromtimestamp(record.created, UTC).isoformat(),
             "level": record.levelname,
             "service": record.name.removeprefix("shopsphere."),
             "message": record.getMessage(),
             "request_id": request_id_context.get(),
-            # A request ID is not an OpenTelemetry trace ID. Added in Phase 8.
-            "trace_id": None,
+            "trace_id": f"{span_context.trace_id:032x}"
+            if span_context.is_valid
+            else None,
+            "span_id": f"{span_context.span_id:016x}"
+            if span_context.is_valid
+            else None,
         }
         for field in EVENT_FIELDS:
             if hasattr(record, field):
@@ -91,12 +97,19 @@ class RequestLoggingMiddleware:
                 status_code = message["status"]
                 response_started = True
                 MutableHeaders(scope=message)["X-Request-ID"] = request_id
+                context = trace.get_current_span().get_span_context()
+                if context.is_valid:
+                    MutableHeaders(scope=message)["X-Trace-ID"] = (
+                        f"{context.trace_id:032x}"
+                    )
             await send(message)
 
         try:
             await self.app(scope, receive, send_with_request_id)
         except Exception as exc:
             status_code = 500
+            # This middleware handles the exception before outer OTel middleware.
+            trace.get_current_span().record_exception(exc)
             self.logger.exception(
                 "Unhandled request error",
                 extra={"event": "request.failed", "error_type": type(exc).__name__},

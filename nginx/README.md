@@ -51,9 +51,14 @@ See the [Phase 4 lesson](../docs/phase-04-nginx.md) for log fields, request IDs,
 failure exercises, and the request lifecycle. The
 [Phase 5 lesson](../docs/phase-05-docker-compose.md) explains containers and DNS.
 The [Phase 6 lesson](../docs/phase-06-centralized-logging.md) searches the proxy's
-access and error events centrally. Phase 7 will add exporter measurements.
+access and error events centrally. Phase 7 adds exporter measurements.
 
 Phase 7's container config adds an internal port 8089 `/stub_status` listener for
 NGINX Prometheus Exporter. It has no host port or access log. Its aggregate request
 and connection statistics include status/health traffic; they do not provide
 route latency or status-code breakdowns. The native Phase 4 config is unchanged.
+
+Phase 8 explicitly forwards W3C `traceparent` and `tracestate` to the API. NGINX
+passes the API's `X-Trace-ID` response header back to the caller. The Python SDK
+validates incoming context; this proxy image has no tracing module and creates
+no span of its own. Native NGINX-generated errors can therefore lack a trace ID.

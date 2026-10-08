@@ -4,19 +4,27 @@ import logging
 from pathlib import Path
 from time import perf_counter
 
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind, StatusCode, Tracer
 from sqlalchemy import create_engine, event, select, text
 from sqlalchemy.orm import sessionmaker
 
 from app.config import Settings
 from app.logging import REQUEST_ID_PATTERN, configure_logging, request_id_context
-from app.metrics import Metrics
+from app.metrics import SQL_OPERATIONS, Metrics
 from app.models import Base, ProductRecord
 
 logger = logging.getLogger("shopsphere.order-api")
 
 
 class Database:
-    def __init__(self, settings: Settings, *, metrics: Metrics | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        metrics: Metrics | None = None,
+        tracer: Tracer | None = None,
+    ) -> None:
         self.engine = create_engine(
             settings.database_url.get_secret_value(),
             pool_pre_ping=True,
@@ -35,6 +43,24 @@ class Database:
         @event.listens_for(self.engine, "before_cursor_execute", retval=True)
         def before_query(connection, cursor, statement, parameters, context, many):
             context.shopsphere_started = perf_counter()
+            if tracer and trace.get_current_span().get_span_context().is_valid:
+                operation = (
+                    statement.split(None, 1)[0].upper() if statement else "OTHER"
+                )
+                if operation not in SQL_OPERATIONS:
+                    operation = "OTHER"
+                # No SQL text, parameter values, credentials, or request-ID comments.
+                context.shopsphere_span = tracer.start_span(
+                    f"{operation} {self.engine.url.database}",
+                    kind=SpanKind.CLIENT,
+                    attributes={
+                        "db.system.name": "postgresql",
+                        "db.namespace": self.engine.url.database,
+                        "db.operation.name": operation,
+                        "server.address": self.engine.url.host,
+                        "server.port": self.engine.url.port or 5432,
+                    },
+                )
             request_id = request_id_context.get()
             # Only middleware-validated IDs enter SQL comments; values stay bound.
             if request_id and REQUEST_ID_PATTERN.fullmatch(request_id):
@@ -44,6 +70,9 @@ class Database:
         @event.listens_for(self.engine, "after_cursor_execute")
         def after_query(connection, cursor, statement, parameters, context, many):
             duration = (perf_counter() - context.shopsphere_started) * 1000
+            span = getattr(context, "shopsphere_span", None)
+            if span is not None:
+                span.end()
             if metrics is not None:
                 metrics.observe_query(statement, duration / 1000, "success")
             logger.log(
@@ -62,6 +91,13 @@ class Database:
         def query_failed(context):
             execution = context.execution_context
             started = getattr(execution, "shopsphere_started", None)
+            span = getattr(execution, "shopsphere_span", None)
+            if span is not None:
+                span.set_status(StatusCode.ERROR)
+                span.set_attribute(
+                    "error.type", type(context.original_exception).__name__
+                )
+                span.end()
             if metrics is not None and started is not None:
                 metrics.observe_query(
                     context.statement or "", perf_counter() - started, "error"

@@ -1,5 +1,8 @@
 # Phase 7 — Metrics with Prometheus and Grafana
 
+This lesson describes the metrics milestone. The current repository also includes
+[Phase 8 tracing](phase-08-distributed-tracing.md) and application images 0.8.0.
+
 This phase measures the application, proxy, database, and Linux Docker host.
 Prometheus collects samples; Grafana turns them into three provisioned dashboards.
 The request path and Phase 6 logging continue to work independently of this stack.

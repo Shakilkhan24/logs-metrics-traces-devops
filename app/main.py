@@ -8,6 +8,7 @@ from uuid import UUID
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
+from opentelemetry.sdk.trace import TracerProvider
 from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -21,6 +22,7 @@ from app.logging import (
 from app.metrics import Metrics, MetricsMiddleware
 from app.schemas import Order, OrderCreate, PaymentResult, Product
 from app.store import PostgresStore, UnknownProductError
+from app.tracing import Tracing
 
 logger = logging.getLogger("shopsphere.order-api")
 
@@ -29,14 +31,17 @@ def create_app(
     *,
     settings: Settings | None = None,
     payment_transport: httpx.AsyncBaseTransport | None = None,
+    tracer_provider: TracerProvider | None = None,
 ) -> FastAPI:
     config = settings if settings is not None else Settings.from_env()
     metrics = Metrics("order-api")
+    tracing = Tracing("order-api", tracer_provider)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
         configure_logging("order-api")
-        database = Database(config, metrics=metrics)
+        tracing.start()
+        database = Database(config, metrics=metrics, tracer=tracing.tracer)
         try:
             try:
                 database.check_ready()
@@ -53,6 +58,7 @@ def create_app(
                 transport=payment_transport,
                 trust_env=False,
             ) as payment_client:
+                tracing.instrument_client(payment_client)
                 application.state.payment_client = payment_client
                 logger.info("Order API started", extra={"event": "service.started"})
                 try:
@@ -61,11 +67,12 @@ def create_app(
                     logger.info("Order API stopped", extra={"event": "service.stopped"})
         finally:
             database.close()
+            await tracing.shutdown()
 
     application = FastAPI(
         title="ShopSphere Order API",
-        version="0.7.0",
-        description="Phase 7: Prometheus metrics and Grafana dashboards.",
+        version="0.8.0",
+        description="Phase 8: distributed tracing through OpenTelemetry and Jaeger.",
         lifespan=lifespan,
     )
     application.add_middleware(RequestLoggingMiddleware, service="order-api")
@@ -86,7 +93,7 @@ def create_app(
         return {
             "service": "order-api",
             "status": "ok",
-            "phase": 7,
+            "phase": 8,
             "storage": "postgresql",
         }
 
@@ -173,6 +180,7 @@ def create_app(
     async def error():
         raise RuntimeError("Intentional ShopSphere failure for the observability lab")
 
+    tracing.instrument_app(application)
     return application
 
 

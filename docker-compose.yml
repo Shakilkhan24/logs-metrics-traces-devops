@@ -25,6 +25,12 @@ x-database-environment: &database-environment
   # Local lab credentials; production secret management is a later concern.
   DATABASE_URL: postgresql+psycopg://shopsphere:shopsphere_local@postgres:5432/shopsphere
 
+x-tracing-environment: &tracing-environment
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+  OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
+  OTEL_PROPAGATORS: tracecontext
+  OTEL_SEMCONV_STABILITY_OPT_IN: http
+
 services:
   postgres:
     image: postgres:18.6-bookworm@sha256:3725f4e2499eef5134592b3b4ab79a543ed7f8e533b05b5b637af926630f6650
@@ -50,7 +56,7 @@ services:
 
   db-init:
     <<: *python
-    image: shopsphere-db-init:0.7.0
+    image: shopsphere-db-init:0.8.0
     command: ["python", "-m", "app.database"]
     environment: *database-environment
     depends_on:
@@ -60,7 +66,8 @@ services:
 
   payment:
     <<: *python
-    image: shopsphere-payment:0.7.0
+    image: shopsphere-payment:0.8.0
+    environment: *tracing-environment
     command: ["python", "-m", "uvicorn", "payment.main:app", "--host", "0.0.0.0", "--port", "8001", "--no-access-log", "--no-proxy-headers"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/', timeout=2).close()"]
@@ -73,11 +80,11 @@ services:
 
   api:
     <<: *python
-    image: shopsphere-api:0.7.0
+    image: shopsphere-api:0.8.0
     # The API has no host port. All peers on this lab network are trusted.
     command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--proxy-headers", "--forwarded-allow-ips", "*"]
     environment:
-      <<: *database-environment
+      <<: [*database-environment, *tracing-environment]
       PAYMENT_BASE_URL: http://payment:8001
       PAYMENT_TIMEOUT_SECONDS: ${PAYMENT_TIMEOUT_SECONDS:-2}
     depends_on:
@@ -99,7 +106,7 @@ services:
     build:
       context: .
       dockerfile: nginx/Dockerfile
-    image: shopsphere-nginx:0.7.0
+    image: shopsphere-nginx:0.8.0
     ports:
       - "127.0.0.1:${SHOPSPHERE_PORT:-8088}:8088"
     depends_on:
@@ -358,6 +365,67 @@ services:
     networks: [telemetry]
     logging: *logging
 
+  tracing-storage-init:
+    image: python:3.12.15-slim-bookworm@sha256:54c85f3c47607a77f32adec749d3c81d1348bf25833671f512b26a9b6d778cb3
+    # Assign only volume roots; never recursively rewrite existing trace data.
+    command: ["python", "-c", "import os; [os.chown(p, 10001, 10001) for p in ('/storage/jaeger', '/storage/collector')]"]
+    volumes:
+      - jaeger_data:/storage/jaeger
+      - otel_queue:/storage/collector
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    security_opt: [no-new-privileges:true]
+    network_mode: none
+    restart: "no"
+    logging: *logging
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6
+    command: ["--config=/etc/otelcol/config.yml"]
+    volumes:
+      - ./otel/collector-config.yml:/etc/otelcol/config.yml:ro
+      - otel_queue:/var/lib/otelcol
+    depends_on:
+      tracing-storage-init:
+        condition: service_completed_successfully
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
+    restart: unless-stopped
+    stop_grace_period: 20s
+    networks: [app, telemetry]
+    logging: *logging
+
+  jaeger:
+    image: jaegertracing/jaeger:2.22.0@sha256:836b967b5abcf1f7758066aa6b348619267a2f1459f72d472840570f9bd88a17
+    command: ["--config=/etc/jaeger/config.yml"]
+    environment:
+      # Jaeger's custom self-tracing provider reads SDK sampling settings.
+      OTEL_TRACES_SAMPLER: always_off
+    volumes:
+      - ./jaeger/jaeger-config.yml:/etc/jaeger/config.yml:ro
+      - jaeger_data:/var/lib/jaeger
+    tmpfs:
+      - /tmp
+    ports:
+      - "127.0.0.1:${JAEGER_PORT:-16686}:16686"
+    depends_on:
+      tracing-storage-init:
+        condition: service_completed_successfully
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    restart: unless-stopped
+    stop_grace_period: 20s
+    networks: [telemetry]
+    logging: *logging
+
 networks:
   app:
     driver: bridge
@@ -365,6 +433,8 @@ networks:
     driver: bridge
 
 volumes:
+  jaeger_data:
+  otel_queue:
   prometheus_data:
   grafana_data:
   docker_logs:

@@ -629,3 +629,118 @@ inspect the dashboards, and find the corresponding requests in Kibana. Explain
 why `up` and `pg_up` differ, what resets when an application restarts, and which
 machine and filesystem the infrastructure dashboard describes. Phase 8 will add
 OpenTelemetry instrumentation, Collector, and Jaeger; tracing is still planned.
+
+## 2026-10-07–08 — Phase 8: Distributed tracing
+
+Commit subject: `feat: implement distributed tracing`.
+
+### What changed and why
+
+The API and mock payment service now have independent OpenTelemetry providers.
+FastAPI instrumentation creates HTTP server spans; instrumentation on the API's
+HTTPX client injects W3C context into payment requests. Explicit SQLAlchemy event
+hooks create PostgreSQL client spans within request context, without globally
+patching database engines or recording SQL text and parameters. Application and
+NGINX images are version 0.8.0.
+
+NGINX explicitly forwards `traceparent` and `tracestate`; it has no native tracing
+module and creates no proxy span. Applications return `X-Trace-ID` and include
+active trace/span IDs in JSON logs. Request IDs remain distinct. The existing
+Elastic parser already maps application trace IDs to `trace.id`; Phase 9 will
+build the complete cross-signal investigation workflow and links.
+
+SDK batch processors export asynchronously to Collector Contrib 0.162.0, which
+applies memory limiting and batching before exporting to Jaeger 2.22.0. Images
+are pinned by digest; Python SDK/instrumentation versions are pinned together.
+The Collector's bounded exporter queue persists in `otel_queue`; Jaeger uses
+Badger in `jaeger_data` with a 48-hour span TTL. A small initializer assigns UID
+10001 ownership of those volume roots without recursively rewriting data.
+Only the Jaeger UI/query port is published, on loopback. Neither tracing service
+gates application startup.
+
+### DevOps concepts introduced
+
+Spans and trace IDs, parent-child relationships, service resources, W3C context
+propagation, remote parents, sampling, worker-thread context, inclusive timing,
+client/server span boundaries, failed-span status and exception events, OTLP,
+receivers/processors/exporters, bounded queues, graceful flushing, durable
+exporter queues, query APIs, and single-node trace storage.
+
+A slow SQL span fits inside its API server span. A payment request spans two
+processes, with a client span between server spans. Incoming unsampled context
+retains its trace ID but exports no spans. `/metrics` is excluded while ordinary
+health probes remain observable. Native execution requires an explicit OTLP
+endpoint; Compose enables tracing with an optional disable switch.
+
+### Problems found during implementation
+
+A stopped payment container can cause connection refusal or a connection timeout
+on Docker Desktop. The integration check accepts the application's corresponding
+502/504 responses and requires both failed server and client spans. Jaeger's
+service-discovery API uses `/api/v3/services`; the tracing checks parse its v3
+streamed OTLP JSON envelopes rather than assuming older response shapes.
+
+Jaeger's default self-tracing tried to export to unused local gRPC port 4317.
+Its custom provider bypasses the Collector's YAML trace-level setting, so
+`OTEL_TRACES_SAMPLER=always_off` and the query extension's `enable_tracing: false`
+disable self-tracing while preserving application ingestion over OTLP/HTTP.
+SQL spans use local event hooks
+to avoid process-global instrumentor state leaking between application instances.
+Handled application exceptions are explicitly recorded before the logging
+middleware returns its existing JSON 500 response.
+
+An environment restart interrupted validation and removed temporary result logs.
+The same Docker Desktop daemon and retained volumes were verified before resuming.
+A stale WSL working-directory handle prevented one pytest launch before collection;
+starting from the canonical workspace path restored normal test execution.
+An earlier concurrent run also hit six native-process startup timeouts. All 11
+NGINX tests passed when rerun with less load; application startup and request
+timeouts were left unchanged.
+
+### Verification
+
+All 60 distinct pytest cases passed across the full run and the NGINX rerun,
+including five tracing cases. The Compose application lifecycle smoke checks,
+centralized logging smoke checks, and metrics smoke checks passed. Ruff lint and
+formatting, Compose validation, local documentation links, the 14 README
+sections, and the unchanged original-specification hash were checked.
+The distributed tracing smoke suite passed propagation, SQL timing, error status,
+unsampled context, graceful flush, Collector outage, persisted queue recovery
+after SIGKILL, and retained traces after Jaeger replacement. Its readiness loop
+now tolerates a transient connection reset while the replacement starts.
+
+### Retained runtime evidence
+
+The main project has 14 running services and four successful initialization jobs.
+All six Prometheus targets are up, Elasticsearch is green, and Grafana retains
+its three provisioned dashboards. The original main-project order, both Phase 3
+orders, and nine Phase 6 correlation logs remain available.
+
+The payment trace `0cbcbe2493cceaa571f90714a4acddb3` survived the environment
+restart and Jaeger replacement. Fresh payment, slow-query, and intentional-error
+requests produced three, two, and one spans respectively; eight Elasticsearch
+events contain their matching `trace.id` values.
+
+### Production equivalent and limits
+
+This lab samples all new roots and trusts valid incoming sampling decisions.
+Production needs an intentional sampling and external-context trust policy,
+TLS/authentication, telemetry content review, capacity planning, shared trace
+storage, replicas, backups, and queue/export monitoring. URLs and exception
+messages can still contain application information even when SQL text, headers,
+and bodies are not captured by the lab configuration.
+
+Persistence is not exactly-once or lossless delivery. SDK memory, unqueued
+batches, full buffers, permanent failures, and ambiguous acknowledgements can
+lose or duplicate spans. Jaeger storage is single-node; TTL is not a disk quota,
+and a volume is not a backup. Minimal tracing images expose internal health
+endpoints but have no shell-based Docker probe, so actual delivery is verified
+separately from Compose process startup.
+
+### Learner checkpoint and next phase
+
+Follow [Phase 8](phase-08-distributed-tracing.md). Locate the three payment spans,
+find a slow SQL child, and inspect an intentional exception. Explain the parent
+IDs, why PostgreSQL spans belong to the API, why NGINX has no span, and why an
+unsampled request can return an ID absent from Jaeger. Phase 9 will connect logs,
+metrics, and traces through complete debugging exercises.

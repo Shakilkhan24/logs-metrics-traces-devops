@@ -18,8 +18,7 @@ Files and responsibilities:
 | `metrics.py` | Request, error, and database measurements | 7 |
 | `tracing.py` | OpenTelemetry setup and instrumentation | 8 |
 
-The API, database, Docker, and metrics files are implemented. Tracing remains
-planned. The Compose API is reached through NGINX on host port 8088.
+The API, database, Docker, metrics, and tracing files are implemented. The Compose API is reached through NGINX on host port 8088.
 
 `Dockerfile` uses Python 3.12.15 and the pinned runtime requirements, includes the
 SQL seed file, and runs as UID 10001. Compose builds API, payment, and `db-init`
@@ -41,3 +40,12 @@ and payment service expose `/metrics`; middleware records bounded HTTP categorie
 and SQLAlchemy records successful/failed cursor durations. All durations use
 seconds. Request IDs, raw SQL, and order IDs are not metric labels. See the
 [Phase 7 lesson](../docs/phase-07-metrics.md) for timing and single-worker limits.
+
+`tracing.py` configures a private SDK provider for each app and a bounded batch
+exporter during its lifespan. FastAPI creates server spans; only the payment HTTP
+client is instrumented. SQLAlchemy event hooks create child spans for cursor
+execution without recording SQL text or parameter values. Worker-thread context
+preserves parent IDs. Application logs and responses expose the active trace ID.
+Compose enables OTLP/HTTP export; native runs require an explicit endpoint.
+See the [Phase 8 lesson](../docs/phase-08-distributed-tracing.md) for sampling,
+provider ownership, graceful shutdown, and outage behavior.

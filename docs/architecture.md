@@ -1,18 +1,19 @@
 # Architecture
 
-Status: Phase 7 runs the application, centralized logging, and metrics through Compose.
+Status: Phase 8 runs the application, logs, metrics, and traces through Compose.
 Elastic Agent collects logs for Elasticsearch/Kibana; Prometheus scrapes metrics
-for Grafana. Distributed tracing remains planned.
-The [main README](../README.md#3-architecture-diagram) contains the target diagram.
+for Grafana. OpenTelemetry exports spans through the Collector to Jaeger.
+The [main README](../README.md#3-architecture-diagram) contains the implemented diagram.
 
 Current path: client → NGINX → FastAPI → SQLAlchemy/Psycopg → PostgreSQL. A separate
 `GET /payment` path calls the mock payment service over HTTP. Order creation does
 not trigger payment.
 
 The root `docker-compose.yml` defines project `shopsphere`, application and
-telemetry bridge networks, twelve long-running services, and three initialization
+telemetry bridge networks, fourteen long-running services, and four initialization
 jobs. NGINX publishes `127.0.0.1:8088`; Elasticsearch and Kibana publish loopback
-ports 9200 and 5601; Prometheus and Grafana publish 9090 and 3000. Exporter ports
+ports 9200 and 5601; Prometheus and Grafana publish 9090 and 3000; Jaeger publishes
+16686. Collector/Jaeger OTLP and health endpoints, exporter ports
 and NGINX status port 8089 remain internal. NGINX forwards to `api:8000`; the API uses
 `postgres:5432` and `payment:8001`. Service names resolve through Docker DNS.
 NGINX re-resolves its upstream so an API address change needs no proxy restart.
@@ -145,20 +146,32 @@ and three versioned dashboards, retaining accounts/preferences in a separate
 volume. Neither backend gates application startup. Missing scrapes create gaps;
 persistent storage preserves older samples but cannot reconstruct those gaps.
 
-Spans flow from instrumented services to the Collector and then to Jaeger. The
-FastAPI and payment services will propagate trace context over HTTP, while
-SQLAlchemy instrumentation will create database client spans in the API process.
-Those spans do not require installing an application SDK inside PostgreSQL.
+Spans flow from each application's private SDK provider over OTLP/HTTP to the
+Collector, then Jaeger. The Collector joins both networks; Jaeger joins only
+telemetry. Application startup does not depend on either. FastAPI creates server
+spans; the API's HTTPX client injects context into payment calls. Explicit
+SQLAlchemy event hooks create database client spans without globally instrumenting
+other engines or recording SQL text/parameters. `/metrics` is excluded from tracing.
 
-The services propagate `X-Request-ID` for log correlation only. SQL statements also
-carry the validated ID in a comment, making it visible in native slow/error logs.
-No tracing SDK or
-export pipeline has been configured, and application logs report `trace_id: null`.
+NGINX forwards `traceparent` and `tracestate` without creating a proxy span. The
+SDK validates incoming context, samples new roots, and respects a remote parent's
+sampling flag. Application responses expose `X-Trace-ID`; application JSON logs
+include the active trace/span IDs. Request IDs still correlate native proxy and
+PostgreSQL logs, including the validated SQL comment. Those source logs do not
+claim native spans. Phase 9 develops the full cross-signal workflow.
 
-NGINX is now part of the request path. Forwarding trace context and producing a
-proxy span are separate behaviors. Native NGINX spans require explicit proxy
-instrumentation; module and image support will be checked in Phase 8 before
-claiming that the proxy appears as a span.
+The tracing storage initializer assigns UID 10001 ownership of the two volume
+roots. Collector and Jaeger run as that user with read-only root filesystems and
+dropped capabilities. Collector memory limiting and batching precede its bounded,
+persistent exporter queue in `otel_queue` (512 requests, 64 MiB queue database).
+Jaeger uses single-node Badger in `jaeger_data`, with a 48-hour span TTL. Graceful
+replacement preserves traces; neither a persistent queue nor a storage volume
+guarantees lossless/exactly-once delivery, replicas, or backups. The SDK queue and
+unpersisted processor batches can lose spans during crashes or prolonged outages.
+
+The minimal tracing images have no shell-based Docker health probes. Their
+internal health endpoints, Jaeger's query API, and the tracing smoke test verify
+readiness and delivery separately from `compose --wait` process startup.
 
 ## Timing and correlation
 
@@ -181,5 +194,7 @@ Compose injects service-name connection URLs; native defaults still use localhos
 Elastic components pin matching 9.5.4 images. The lab disables Elastic security
 and binds host ports to loopback; production requires authentication and TLS.
 Metrics components also pin image versions/digests. Grafana has a configurable
-initial local account; Prometheus is unauthenticated on loopback. Tracing storage
-and capacity choices remain for Phase 8.
+initial local account; Prometheus is unauthenticated on loopback. Tracing pins
+Collector Contrib 0.162.0 and Jaeger 2.22.0 by digest, with a bounded local queue
+and single-node Badger storage. Shared trace storage and availability are
+production extensions; correlation exercises are Phase 9.

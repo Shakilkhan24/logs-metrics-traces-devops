@@ -5,25 +5,30 @@ from contextlib import asynccontextmanager
 from uuid import uuid4
 
 from fastapi import FastAPI
+from opentelemetry.sdk.trace import TracerProvider
 
 from app.logging import RequestLoggingMiddleware, configure_logging
 from app.metrics import Metrics, MetricsMiddleware
 from app.schemas import PaymentResult
+from app.tracing import Tracing
 
 logger = logging.getLogger("shopsphere.mock-payment")
 
 
-def create_app() -> FastAPI:
+def create_app(*, tracer_provider: TracerProvider | None = None) -> FastAPI:
     metrics = Metrics("mock-payment")
+    tracing = Tracing("mock-payment", tracer_provider)
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
         configure_logging("mock-payment")
+        tracing.start()
         logger.info("Mock payment started", extra={"event": "service.started"})
         try:
             yield
         finally:
             logger.info("Mock payment stopped", extra={"event": "service.stopped"})
+            await tracing.shutdown()
 
     application = FastAPI(title="ShopSphere Mock Payment", lifespan=lifespan)
     application.add_middleware(RequestLoggingMiddleware, service="mock-payment")
@@ -44,6 +49,7 @@ def create_app() -> FastAPI:
         )
         return result
 
+    tracing.instrument_app(application)
     return application
 
 

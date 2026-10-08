@@ -1,5 +1,38 @@
 # Troubleshooting
 
+## Jaeger is running but a trace is missing
+
+Use `curl -i http://127.0.0.1:8088/payment` and copy `X-Trace-ID`. Open
+`http://127.0.0.1:16686/trace/<trace-id>`, or query `/api/v3/traces/<trace-id>`.
+Allow a few seconds for batching. Service discovery uses `/api/v3/services` in
+the pinned Jaeger version. The minimal tracing images have no Docker health
+probe; `compose --wait` alone does not verify delivery.
+
+Check the application tracing endpoint and `OTEL_SDK_DISABLED`. Compose sets the
+internal OTLP/HTTP URL ending in `/v1/traces`; native runs require an explicit
+reachable endpoint. Published port 16686 is for querying, not OTLP ingestion.
+Inspect `docker compose logs --tail 30 api payment otel-collector jaeger` and run
+`python3 tests/tracing_smoke.py --no-build` for an isolated pipeline check.
+An incoming unsampled parent retains an ID but exports no spans. `/metrics` is
+excluded. Health probes can produce ordinary traces even without manual traffic.
+Jaeger's internal self-tracing is disabled independently of application ingestion.
+
+The Collector queue is bounded. Its internal metrics on port 8888 expose queue
+size, refused spans, and export failures. SDK buffers and unqueued batches can
+lose spans during outages; persistence is not an exactly-once delivery guarantee.
+If the storage initializer fails, inspect `tracing-storage-init` before changing
+UIDs: Collector and Jaeger need their own writable volumes as UID 10001.
+Ordinary `down` retains those volumes; `down --volumes` erases traces and queues.
+
+## A trace lacks an NGINX or PostgreSQL server span
+
+NGINX forwards W3C context but has no tracing module in this lab. PostgreSQL spans
+are client spans around SQLAlchemy cursor execution in `order-api`; the database
+server has no SDK. A supplied curl parent can also appear as an absent external
+parent because curl does not export it. Check span kind and service identity
+before interpreting an absent span as dropped telemetry. A parent duration
+includes its children; do not add both durations as sequential time.
+
 ## Metrics targets are down or Grafana has no data
 
 Open Prometheus on port 9090 and inspect **Status → Targets**. Six jobs should
